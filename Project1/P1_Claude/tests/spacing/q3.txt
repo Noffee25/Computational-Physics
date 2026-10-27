@@ -1,0 +1,4 @@
+RANNUM 6 777 0 plan_long.txt
+LOGISTIC 9 777 0 plan_medium.txt
+R250 5 777 0 plan_long.txt
+RANDUsingle 1 777 1 plan_medium.txt

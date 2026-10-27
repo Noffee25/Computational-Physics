@@ -1,0 +1,5 @@
+# LOGISTIC seed          777 d  3 mode  1 Nt     10000000 cpu     1.04
+# k  ncells  sum_n2  nempty  maxcount
+    32       32768          3063385744           0         388
+    64      262144           393133342           0          75
+   100     1000000           111655174         101          30

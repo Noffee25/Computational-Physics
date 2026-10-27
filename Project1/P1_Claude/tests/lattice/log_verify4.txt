@@ -1,0 +1,3 @@
+MINSTD2 tuples checked:   2147483646  cpu    104.0 s
+  state after P steps equals start: T   state after P/2 steps equals start: F
+wrote verify_MINSTD2.txt

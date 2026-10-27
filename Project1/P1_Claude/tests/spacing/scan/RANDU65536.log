@@ -1,0 +1,7 @@
+RANDU N=1000 R=10000 t=     0.1 s
+RANDU N=3000 R=5000 t=     0.3 s
+RANDU N=10000 R=5000 t=     0.8 s
+RANDU N=30000 R=2000 t=     1.6 s
+RANDU N=100000 R=1000 t=     2.9 s
+RANDU N=300000 R=500 t=     5.5 s
+RANDU N=1000000 R=300 t=     9.7 s

@@ -1,0 +1,32 @@
+A_w_mt|alg='wolff' src=7 nmeas=10000000 nbatch=1000
+A_w_r250|alg='wolff' src=5 nmeas=10000000 nbatch=1000
+A_w_rannum|alg='wolff' src=6 nmeas=10000000 nbatch=1000
+A_w_minstd|alg='wolff' src=4 nmeas=10000000 nbatch=1000
+A_w_rand|alg='wolff' src=3 nmeas=10000000 nbatch=1000
+A_w_randu|alg='wolff' src=1 nmeas=10000000 nbatch=1000
+A_w_randm|alg='wolff' src=2 nmeas=10000000 nbatch=1000
+B_m_mt|alg='metro' src=7 ntherm=10000 nmeas=10000000 nbatch=1000
+B_m_rannum|alg='metro' src=6 ntherm=10000 nmeas=10000000 nbatch=1000
+B_m_r250|alg='metro' src=5 ntherm=10000 nmeas=10000000 nbatch=1000
+B_m_randu|alg='metro' src=1 ntherm=10000 nmeas=9994240 nbatch=610
+B_m_randm|alg='metro' src=2 ntherm=10000 nmeas=9994240 nbatch=610
+B_m_minstd|alg='metro' src=4 ntherm=10000 nmeas=4000000 nbatch=400
+B_m_rand|alg='metro' src=3 ntherm=10000 nmeas=4000000 nbatch=400
+C_q521|alg='wolff' src=20 lags=168,521,0,0 nmeas=6000000 nbatch=600
+C_q607|alg='wolff' src=20 lags=273,607,0,0 nmeas=6000000 nbatch=600
+C_q1279|alg='wolff' src=20 lags=418,1279,0,0 nmeas=6000000 nbatch=600
+C_q2281|alg='wolff' src=20 lags=1029,2281,0,0 nmeas=6000000 nbatch=600
+C_q9689|alg='wolff' src=20 lags=4187,9689,0,0 nmeas=6000000 nbatch=600
+C_dec3|alg='wolff' src=21 dec=3 nmeas=4000000 nbatch=400
+C_dec5|alg='wolff' src=21 dec=5 nmeas=4000000 nbatch=400
+C_ziff|alg='wolff' src=20 ntap=4 lags=471,1586,6988,9689 nmeas=4000000 nbatch=400
+C_gmt|alg='wolff' src=25 nmeas=4000000 nbatch=400
+C_alfg|alg='wolff' src=24 nmeas=4000000 nbatch=400
+C_dec2|alg='wolff' src=21 dec=2 nmeas=2000000 nbatch=200
+C_dec4|alg='wolff' src=21 dec=4 nmeas=2000000 nbatch=200
+C_xor2|alg='wolff' src=22 nmeas=2000000 nbatch=200
+C_add2|alg='wolff' src=23 nmeas=2000000 nbatch=200
+C_rev|alg='wolff' src=20 lags=147,250,0,0 nmeas=2000000 nbatch=200
+C_q89|alg='wolff' src=20 lags=38,89,0,0 nmeas=2000000 nbatch=200
+C_q127|alg='wolff' src=20 lags=63,127,0,0 nmeas=2000000 nbatch=200
+C_own250|alg='wolff' src=20 lags=103,250,0,0 nmeas=1000000 nbatch=100

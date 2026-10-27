@@ -1,0 +1,6 @@
+done RANDU
+./bitperiod 1 777 out/period_g1.txt  13.24s user 0.14s system 38% cpu 34.740 total
+done RANDM
+./bitperiod 2 777 out/period_g2.txt  13.26s user 0.14s system 43% cpu 30.579 total
+done MINSTD
+./bitperiod 4 777 out/period_g4.txt  3.99s user 0.04s system 52% cpu 7.709 total

@@ -1,0 +1,377 @@
+{
+ "family": "spacing",
+ "title": "Maximum and minimum spacings, birthday collisions and exact periods: where each generator runs out of resolution, states, or randomness",
+ "summary": "I sorted up to $2\\times10^6$ stored points per replicate with an O(n) bucket sort. A top-window trick extends the scan to $N = 2^{31}$ draws per replicate. The maximum spacing $M_n$, minimum spacing $m_n$ and duplicate counts were then compared with their exact null laws for 14 generator configurations, with up to $10^4$ replicates per sample size. MT19937 and RANNUM pass every block (smallest block p = 0.012 among 24 blocks). The maximum spacing responds mainly to period exhaustion. RANDU and RANDM drift at $N=10^8$ (mean shift $-1.4$ Gumbel units, as predicted by $N_{\\rm eff}=-\\rho\\ln(1-N/\\rho)$) and collapse to $T=-13.06$ at $N=2^{29}$; MINSTD fails at $N\\ge 2^{29}$. It sees output grids only once $N$ is comparable to the number of grid values (RAND at $10^7$, REAL*4 at $10^8$). Minimum spacings and duplicates catch the same defects four to five decades earlier: LCGs never repeat a value inside one period (0 repeats where $2.8\\times10^5$ are expected for RANDU), and the birthday inversion recovers effective resolutions to 0.02 to 0.5% (RAND $=2^{31}/511$, REAL*4 $=0.75\\cdot2^{25}$, R250 $=2^{32}$). The logistic map fails at $N=10^3$, because its tent-map conjugacy forces close pairs into doubling chains ($E[n(n+1)m_n]=2$ exactly). In double precision it is also eventually periodic (seed 777: transient 14,324,259, cycle 5,638,349; 17.9% of starts collapse to 0). Exact Brent periods settle the seed question: $\\lambda=2^{29-k}$ for seed $2^k\\times$odd, with the number of digits irrelevant. A full enumeration of all $10^8$ middle-square seeds shows no seed yields more than 16,903 values. A birthday-spacings extension shows LCGs failing in 2D and 3D once the cell count exceeds the period (RANDU in 3D with only 256 points), and R250 showing a reproducible 10 to 25% excess of collisions in 1D and 2D.",
+ "methods": [
+  {
+   "name": "Maximum spacing test (interval version with endpoints)",
+   "description": "For each replicate, N draws are taken and only those in the top window $[1-2^{-j},1)$ are kept ($j=0$ keeps all). Kept points are rescaled exactly as $v=(u-(1-2^{-j}))2^j$ (Sterbenz: the subtraction is exact). With the endpoints 0 and 1, the n kept points define n+1 spacings $D_0,\\dots,D_n$ (uniform on the simplex). Statistic: $M_n=\\max_i D_i$. Exact null law (Whitworth, Fisher 1929): $P(M_n\\le x)=\\sum_{k=0}^{n+1}(-1)^k\\binom{n+1}{k}(1-kx)_+^n$, with $\\log\\binom{n+1}{k}$ accumulated term by term to avoid cancellation. In the far lower tail ($t=(n+1)x-\\ln(n+1)<-2.5$), the Poisson approximation $F=\\exp[-(n+1)(1-x)^n]$ is used; it is conservative (checked against 80-digit arithmetic at $n=10^3,10^4$). For display, $T=(n+1)M_n-\\ln(n+1)$ is used, which tends to the standard Gumbel law; the exact null sd is 1.2595 at $n=10^3$ and 1.2825 asymptotically. Per replicate: exact PIT and two-sided p. Per block: Fisher's combination $-2\\sum\\ln p_i\\sim\\chi^2_{2R}$, plus KS and Anderson-Darling on the PIT values when $R\\ge40$ (AD p from the Marsaglia and Marsaglia 2004 asymptotic law), combined as $p=\\min(1,k\\min p)$ (Bonferroni over the $k$ tests used). Conditional on n, the windowed statistic has exactly the same law, so the window probes resolution $1/N$ while storing only about $N2^{-j}$ points. Each block (N, R) is reseeded with 777, and its replicates are consecutive in one stream.",
+   "parameters": "(N, R, j) = (1e3,1e4,0), (3e3,5e3,0), (1e4,5e3,0), (3e4,2e3,0), (1e5,1e3,0), (3e5,500,0), (1e6,300,0), (3e6,100,1), (1e7,40,2), (1e8,5,6), (2^29,1,8), (1e9,1,9), (2^31-2,1,10). Fourteen configurations: MT19937, RANNUM, R250, MINSTD, RANDU, RANDM, RAND, MT19937 and RANDU with rng_single (REAL*4), LOGISTIC, RANDU and RANDM with seed 65536, MIDSQ with seeds 12345678 and 777. Short configurations stop at 1e6 and LOGISTIC at 1e8. Validation reruns: MT and RANNUM with seeds 778 and 12345 at N = 1e4 and 1e7."
+  },
+  {
+   "name": "Minimum spacing test",
+   "description": "Same samples. Statistic: $m_n=\\min_i D_i$. Exact law: $P(m_n>x)=(1-(n+1)x)_+^n$, so $n(n+1)m_n\\to{\\rm Exp}(1)$. To be resolution aware, the lower-tail probability is evaluated at $m_n+\\delta$ with $\\delta=2^{j-53}$, the double-precision spacing in the window. An exact tie therefore counts as 'below double resolution' rather than as impossible. Block p-values are combined exactly as for the maximum spacing. Diagnostics: the fraction of replicates with a tie ($m_n=0$), compared with $1-e^{-N^2/2G}$, and the mean of $n(n+1)m_n$.",
+   "parameters": "Identical blocks. The heatmap is restricted to N <= 1e7, because beyond that $n^2 2^{j-53}$ is about 0.02 and the duplicate count is the better statistic."
+  },
+  {
+   "name": "Duplicate (birthday) count and effective number of values",
+   "description": "$D=n-\\#\\{\\text{distinct values}\\}$ per replicate, counted exactly from the sorted sample. For iid draws on G equally likely values, $E[D]=N-G[1-(1-1/G)^N]\\approx N^2/2G$. $G_{\\rm eff}$ is obtained by solving this numerically with the replicate mean of D; in a window, $G_{\\rm eff}=2^jG_w$. 95% intervals use Garwood Poisson limits on $\\sum D$. With zero repeats, the lower bound is $G>\\sum\\binom{n}{2}2^j/2.996$. For the 53-bit generators, all blocks are pooled: $G_{\\rm eff}=\\sum\\binom n2 2^j/\\sum D$. Independent long-stream check: an exact bitmap of values already seen (keys: LCG integer state, $2^{22}u$ for RAND, IEEE bits of real(u,4)), with $D(N)$ recorded at $N=2^{i/4}$.",
+   "parameters": "Scan blocks with j = 0 (N = 1e3 to 1e6). Long streams: RAND to 2^27, RANDU to 2^30, MT19937 REAL*4 to 2^30 draws, seed 777."
+  },
+  {
+   "name": "Brent cycle detection on the full LCG state",
+   "description": "Brent's algorithm with power-of-two tortoise jumps, then a second pass for the transient $\\mu$. Maps use exact integer arithmetic ($x\\mapsto ax \\,\\&\\, (2^{31}-1)$ for RANDU and RANDM; a Mersenne reduction for MINSTD). They were verified against rnglib's rng_state_int for the first $10^6$ states.",
+   "parameters": "RANDU and RANDM, 56 seeds each: 3, 77, 777, 7777, 12345, 77777, 314159; $777\\cdot2^k \\bmod 2^{31}$ and $2^k$ for k = 1..24; and 0. MINSTD: seeds 1 and 777. Total about 70 s of CPU."
+  },
+  {
+   "name": "Complete functional graph of the 8-digit middle-square map",
+   "description": "$f(x)=\\lfloor x^2/10^4\\rfloor \\bmod 10^8$ on all $10^8$ states (verified against rnglib for $10^5$ steps). A memoized walk with int16 tail and cycle-id arrays visits each state O(1) times. Output: every cycle (length, minimal element, basin size), and the distribution of the tail length $\\mu$ and of $\\mu+\\lambda$ (the number of distinct values a seed ever produces). Compared with the random-mapping expectations $E[\\mu]=E[\\lambda]=\\sqrt{\\pi N/8}$ and $E[\\mu+\\lambda]=\\sqrt{\\pi N/2}$.",
+   "parameters": "All $10^8$ seeds, 5.4 s."
+  },
+  {
+   "name": "Eventual periodicity of the double-precision logistic map",
+   "description": "$x\\mapsto 4x(1-x)$ evaluated exactly as in rnglib, with Brent's algorithm comparing the 64-bit patterns of the state. The implementation was checked bitwise against rnglib's outputs $(2/\\pi)\\arcsin\\sqrt{x}$ for $10^6$ steps. Each attractor is labeled by its smallest state.",
+   "parameters": "The seed-777 state $x_0=\\{777\\cdot0.618\\ldots\\}=0.2124092586683446$, plus 1000 random starting points from MT19937 (seed 20261023); 325 s of CPU."
+  },
+  {
+   "name": "Without-replacement theory of the period effect",
+   "description": "A full-period LCG sampled N times out of an orbit of $\\rho$ evenly spaced points has $P(\\text{a run of }L\\text{ grid cells is empty})=\\binom{\\rho-L}{N}/\\binom{\\rho}{N}\\approx(1-N/\\rho)^L$. This equals the continuous law with $N_{\\rm eff}=-\\rho\\ln(1-N/\\rho)$, so $E[T]\\approx(N/N_{\\rm eff})(\\ln n+\\gamma)-\\ln n$. For $N\\ge\\rho$ every orbit point appears, and $M_n$ is the deterministic largest orbit gap ($6\\cdot2^{-31}$ for RANDU with $x_0\\equiv1 \\bmod 8$).",
+   "parameters": "Applied to RANDU and RANDM ($\\rho=2^{29}$) and MINSTD ($\\rho=2^{31}-2$)."
+  },
+  {
+   "name": "Cluster theory of the logistic minimum spacing",
+   "description": "Since $u_{i+1}=1-|2u_i-1|$ (the tent map), a pair at distance d is followed by a pair at distance 2d, 4d, and so on. A new close pair can only arise from mirror predecessors ($u_{i-1}+u_{j-1}\\approx1$). Close pairs are therefore Poisson clusters with mean size $\\sum_k 2^{-k}=2$, which gives $P(n(n+1)m_n>t)=e^{-t/2}$. Checked directly on $4000\\times10^3$ logistic draws: successor distance ratio, predecessor symmetry, and KS against Exp(2).",
+   "parameters": "N = 1000, R = 4000 (numpy reimplementation of the same floating-point map)."
+  },
+  {
+   "name": "Birthday-spacings test in t = 1, 2, 3 dimensions (extension)",
+   "description": "Following Marsaglia (1985), Knuth (TAOCP 3.3.2) and L'Ecuyer and Simard (2001). Each of the n points uses t consecutive non-overlapping outputs, with cell index $\\sum_l\\lfloor d\\,u_l\\rfloor d^{l-1}$, $d=2^b$, $k=d^t$. The n birthdays are sorted and the n spacings (including the first birthday) are sorted again. Y is the number of spacing values equal to their predecessor. Null: $Y\\approx{\\rm Poisson}(\\lambda=n^3/4k)$, here with $\\lambda=2$. Block test: two-sided Poisson p for $\\sum Y$ against ${\\rm Poisson}(R\\lambda)$.",
+   "parameters": "t = 3: b = 7..14, n = 2^{b+1} (256 to 32768). t = 2: b = 10..21, n = round((8k)^{1/3}) (203 to 32768). t = 1: b = 24, 27, 30, 33 with n = 512 to 4096. R = 200 to 2000 per block. Ten generators, plus seed checks (R250 seeds 12345 and 99991; RANDU 12345 and 99; MINSTD 1 and 12345; RANDM 12345; MT and RANNUM 12345)."
+  }
+ ],
+ "findings": [
+  {
+   "id": "S1",
+   "claim": "The exact maximum- and minimum-spacing null laws, and their windowed versions, are validated on the good generators. Neither MT19937 nor RANNUM fails any block from $N=10^3$ to $10^9$.",
+   "evidence": "There are 12 blocks per generator, with R from 1 to $10^4$. The smallest combined block p is 0.012 for the MT maximum spacing at $N=10^7$, R=40, and 0.016 for RANNUM at $N=10^4$, R=5000. After 24 blocks the Bonferroni value is 0.29, and reruns with seeds 778 and 12345 at these N give p = 0.11 to 0.88. MT at $N=10^3$, $R=10^4$: sd(T) = 1.261 against the exact 1.2595, KS p = 0.37, AD p = 0.49. Minimum spacing: smallest block p = 0.04 (MT) and 0.035 (RANNUM).",
+   "generators": [
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "spacing_maxgap_dist.png",
+   "category": "validation",
+   "is_anomaly": false
+  },
+  {
+   "id": "S2",
+   "claim": "For LCGs, the maximum spacing detects period exhaustion, not the lattice. The statistic drifts low once N is a sizeable fraction of the period $\\rho$, exactly as sampling without replacement predicts, and collapses to a deterministic value at $N\\ge\\rho$.",
+   "evidence": "RANDU at $N=10^8$ ($N/\\rho=0.186$, R=5, within one period): mean T = $-0.81\\pm0.49$, against the prediction $-0.85$ from $N_{\\rm eff}=-\\rho\\ln(1-N/\\rho)$ and the null 0.58. Stouffer Z = $-3.27$ (p = 1.1e-3), AD p = 1.2e-3. At $N=2^{29}$ every orbit point appears once and $M=6\\cdot2^{-31}$, so T = $-13.06$ (log10 p about $-2\\times10^5$). At $N=10^9$, T = $-11.69$, matching the prediction $(n+1)6\\cdot2^{-31}2^9-\\ln(n+1)$. RANDM is identical. MINSTD: T = $-2.31$ at $2^{29}$ (p = 8.7e-5), $-4.70$ at $10^9$ (p = 10^{-47.5}), and $-13.56$ at $2^{31}-2$. RANDU stays consistent with the null up to $N=10^7$ (p > 0.07).",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD"
+   ],
+   "figure": "spacing_maxgap_scan.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S3",
+   "claim": "The maximum spacing is a weak resolution test. It sees an output grid with G values only once N is comparable to G, when T becomes confined to a lattice of spacing $N/G$ in Gumbel units.",
+   "evidence": "RAND ($G=2^{22}$): passes up to $3\\times10^6$ (p = 0.011, not significant). At $N=10^7$ it fails with KS p = 1.9e-9 and AD p = 3.5e-7 (lattice spacing 2.4). At $N=10^8$, T = 9.58 in every replicate (sd 0.012), because all 65,536 window grid points are filled. T reaches 497 at $2^{31}-2$. MT19937 in REAL*4 (grid $2^{-24}$ near 1): passes to $10^7$. At $10^8$ its T values fall only on the lattice points $-2.34$ and $3.62$ (spacing $(n+1)2^{-18}=5.96$), with block p = 10^{-10.3}. RANDU in REAL*4 gives p = 10^{-7.8} at $10^8$.",
+   "generators": [
+    "RAND",
+    "MT19937",
+    "RANDU"
+   ],
+   "figure": "spacing_maxgap_scan.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "S4",
+   "claim": "Ties among the outputs measure the output grid at $N\\sim\\sqrt{G}$, four to five decades earlier than the maximum spacing. The birthday inversion reproduces each generator's effective resolution to 0.02 to 0.5%, including subtle without-replacement corrections.",
+   "evidence": "Tie fraction for RAND at $N=10^3$: 0.1089 (R=$10^4$) against $1-e^{-N^2/2G}=0.112$. For REAL*4 at $10^3$: 0.0195 against 0.0197. For R250 at $10^5$: 0.686 against 0.688. $G_{\\rm eff}$: RAND $4.2023\\times10^6\\pm0.02\\%$ ($N=10^6$, D = 33,024,144), which equals $2^{31}/511=4.2025\\times10^6$ (each RAND value covers 512 MINSTD states that never repeat) and is 10.1 sigma away from $2^{22}$. R250: $4.278\\times10^9\\pm0.5\\%$ ($2^{32}$). MT19937 in REAL*4: $2.512\\times10^7\\pm0.22\\%$, against $0.75\\cdot2^{25}=2.517\\times10^7$, the non-uniform float spacing. RANDU with seed 65536: exactly 8192. MIDSQ with seed 12345678: 101, its 100-cycle.",
+   "generators": [
+    "RAND",
+    "R250",
+    "MT19937",
+    "RANDU",
+    "MIDSQ"
+   ],
+   "figure": "spacing_duplicates.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "S5",
+   "claim": "Full-state LCGs are permutations, so they produce no repeated value at all inside one period: 'too few' birthdays. The same property gives the minimum spacing a hard floor at the state grid, which fails at $N=10^4$.",
+   "evidence": "RANDU at $N=10^6$, R=300: 0 repeats, against $2.79\\times10^5$ expected for iid sampling from its $2^{29}$ reachable values ($p=e^{-2.8\\times10^5}$). MINSTD: 0 against $6.98\\times10^4$ for $2^{31}-2$ values. Lower bounds: $G_{\\rm eff}>2^{47.4}$ (RANDU) and $>2^{49.4}$ (MINSTD), $2^{18}$ times more than their states. Bitmap stream: RANDU has D(N) = 0 up to $1.6\\times10^8$ draws, then exactly $N-2^{29}$ (D($2^{30}$) = $2^{29}$). Minimum spacing for RANDU at $N=10^4$: 0 of 5000 replicates have $m_n<2^{-30}$, against 444 expected (binomial p about 1e-202). The mean of $n(n+1)m_n$ follows $n^2 2^{-30}$ (930 at $10^6$). MINSTD: block p = 10^{-8.2} at $10^4$ and < 1e-300 at $3\\times10^4$.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD"
+   ],
+   "figure": "spacing_minspacing.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S6",
+   "claim": "The LCG permutation property survives single-precision storage. RANDU held in REAL*4 produces 4.6% fewer duplicates than an ideal uniform rounded to REAL*4, by exactly the amount predicted when distinct states share a float cell.",
+   "evidence": "At $N=10^5$, R=1000: 189,303 ties observed against 198,417 expected for iid rounding (z = $-20.5$). $G_{\\rm eff}=2.638\\times10^7\\pm0.23\\%$ (log2 = 24.653). The prediction is $2^{35}/1303=2.637\\times10^7$, from counting $\\sum_c n_c(n_c-1)$ over float cells with $n_c=2^{5-e}$ orbit points in binade $e$; the ratio 1303/1365.3 = 0.954.",
+   "generators": [
+    "RANDU"
+   ],
+   "figure": "spacing_duplicates.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S7",
+   "claim": "The logistic map fails both spacing tests at $N=10^3$ because of its deterministic tent-map dynamics, not because of precision. Close pairs come in doubling chains, so $n(n+1)m_n\\sim{\\rm Exp}$ with mean exactly 2, and the maximum spacing is overdispersed.",
+   "evidence": "Mean $n(n+1)m_n$: $2.026\\pm0.020$ at $N=10^3$, R=$10^4$ (against 1 under the null, about 50 sigma), and 1.95 to 2.04 for every N up to $3\\times10^5$; block p < 1e-300. Direct check with 4000 replicates: KS against Exp(1) gives p = 4e-233, against Exp(2) p = 0.10. The closest pair's successors sit at exactly 2.000 times the distance (5th, 50th and 95th percentiles all 2.000), and the predecessors are mirror images ($u_{i-1}+u_{j-1}\\approx1$) in 99.85% of cases. Maximum spacing: sd(T) = 1.470 against the exact 1.2595 at $N=10^3$ (16 sigma), with a U-shaped PIT histogram (1482 and 1177 counts in the outer deciles against 1000) and AD p < 1e-300. The excess weakens with N: sd 1.38 at $10^4$, p = 10^{-11.6}. All $10^7$ draws of the $N=10^3$ block lie inside the transient.",
+   "generators": [
+    "LOGISTIC"
+   ],
+   "figure": "spacing_minspacing.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S8",
+   "claim": "In double precision the logistic generator is eventually periodic and often dies. Its cycle explains its large-N failures quantitatively.",
+   "evidence": "Seed 777: transient $\\mu$ = 14,324,259, then cycle $\\lambda$ = 5,638,349, so at most 19,962,608 distinct states. From 1001 random starts there are 6 attractors: cycle 5,638,349 (66.6%), fixed point 0 (17.9% $\\pm$ 1.2%, generator outputs 0 forever), 14,632,801 (10.2%), 10,210,156 (2.5%), 2,441,806 (1.6%), 2,625,633 (1.2%). Transients run from 68,267 to 99,860,965 (median $4.1\\times10^7$, bimodal by attractor). Maximum spacing at $N=10^7$ (replicates inside the cycle): T = 11.31, against the prediction $(n/n_{\\rm cyc})(\\ln n_{\\rm cyc}+\\gamma)-\\ln n=11.4$. There are $1.04\\times10^6$ repeats per replicate, and no repeat at all for $N\\le3\\times10^6$.",
+   "generators": [
+    "LOGISTIC"
+   ],
+   "figure": "spacing_maps.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "S9",
+   "claim": "A complete enumeration of all $10^8$ seeds of the 8-digit middle-square method finds 17 terminal cycles. No seed ever produces more than 16,903 distinct numbers, and the student's seed 777 dies after 2 draws.",
+   "evidence": "Basins: fixed point 0, 50.4%; 100-cycle through 160000, 33.9%; 100-cycle through 810000, 8.1%; fixed point 6250000, 5.8%; two 20-cycles, 0.9% and 0.4%; 115-cycle, 0.19%; the rest below 0.1%. Fixed points (0, 10000, 6250000, 93760000, 66952741) take 56.3% of seeds. The length $\\mu+\\lambda$ has mean 4403, median 2696 and maximum 16,903, below the random-map value $\\sqrt{\\pi N/2}=12{,}533$; the longest cycle is 209. Seed 777 goes $777\\to60\\to0$. Every seed below $10^4$ decreases monotonically to 0, since $x^2/10^4<x$. Seed 12345678: $\\mu$ = 10,352, then the 100-cycle. Seed 65536: $\\mu$ = 6489, then 0. All MIDSQ blocks fail at $N=10^3$ with p < 1e-300.",
+   "generators": [
+    "MIDSQ"
+   ],
+   "figure": "spacing_maps.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S10",
+   "claim": "Exact periods settle the seed question. For RANDU and RANDM the period is $2^{29-k}$, where k is the number of trailing zero bits of the seed, independent of the number of digits. Seed 0 is a fixed point and the student's seed 65536 gives 8192.",
+   "evidence": "Brent's algorithm on the 31-bit state for 112 seeds. All odd seeds (3, 77, 777, 7777, 12345, 77777, 314159) give $\\lambda=2^{29}$=536,870,912. $777\\cdot2^k$ and $2^k$ give $2^{29-k}$ for every k = 1..24, with no exception. $\\mu=0$ always, since the map is a bijection on $\\mathbb{Z}/2^{31}$. Seed 0 gives $\\lambda=1$. MINSTD seeds 1 and 777 give $2^{31}-2$ = 2,147,483,646 with $\\mu=0$. The '5-digit odd' rule is folklore: oddness is necessary and sufficient, and digits are irrelevant.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD"
+   ],
+   "figure": "spacing_lcg_period.png",
+   "category": "generator_flaw",
+   "is_anomaly": false
+  },
+  {
+   "id": "S11",
+   "claim": "The birthday-spacings extension exposes LCG lattices with tiny samples. LCGs fail as soon as the number of cells k exceeds the period $\\rho$, i.e. $n\\approx(8\\rho)^{1/3}$, and RANDU fails in 3D with only 256 points. MT19937, RANNUM and REAL*4 pass all 2D and 3D blocks.",
+   "evidence": "3D: RANDU at n=256 ($k=2^{21}$, 768 numbers per sample) has mean Y = 11.48 against $\\lambda=2$ (R=2000, p < 1e-300). RANDM: Y = 2.10 at n=1024 (p = 10^{-2.6}) and 2.68 at 2048 (p = 10^{-45}). MINSTD: 3.96 at n=4096 (p = 10^{-160}). 2D: MINSTD gives 2.21 at n=2048 ($k=\\rho/2$, p = 10^{-5}) and 4.17 at 3251 ($k=8\\rho$, p = 10^{-240}); RANDU and RANDM fail at n=1290 to 2048. MT19937 and RANNUM give Y/$\\lambda$ = 0.90 to 1.07 up to n = 32,768 (|log10 p| < 1.6). RAND matches MINSTD to 2 decimals in every 2D and 3D block, an independent confirmation that RAND is a truncated MINSTD stream.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD",
+    "RAND",
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "spacing_birthday.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S12",
+   "claim": "R250 passes every maximum-spacing block up to $N=10^9$, yet it shows a reproducible excess of birthday-spacing collisions in 1D and 2D, though not in 3D. This is the only test in this family that R250 fails beyond its 32-bit grid.",
+   "evidence": "1D, n=1024 ($k=2^{27}$): Y/$\\lambda$ = 1.11, 1.09 and 1.10 for seeds 777, 12345 and 99991 (z = 6.9, 8.0, 9.2). 1D, n=2048: 1.17 to 1.22 (z = 10.7 to 13.7). 2D, n = 1290 to 3251: 1.13 to 1.27 (z = 8 to 14, p down to 10^{-17}). 3D, n=2048: 1.00 to 1.03 (z = 0.1, 1.7). Maximum spacing: all 12 blocks have p > 0.07. The 1D failure at n=4096 ($k=2^{33}>2^{32}$) is a resolution effect. The mechanism (plausibly the XOR relations at lags 103 and 250 inside a sample) is not established.",
+   "generators": [
+    "R250"
+   ],
+   "figure": "spacing_birthday.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S13",
+   "claim": "In 1D at fine resolution ($k=2^{27}$ to $2^{30}$, still below the number of states), the LCGs also fail the birthday-spacings test. RANDU has too many collisions, while RANDM and MINSTD can have too few. These effects are reproducible, but their mechanism is only partly understood.",
+   "evidence": "RANDU at n=1024: Y = 2.63 (seed 777, p = 10^{-79}), 2.61 (seed 12345, z = 27) and 2.60 (seed 99, z = 27). MINSTD at n=2048 ($k=2^{30}$): Y = 1.27, 1.29 and 1.27 for seeds 777, 1 and 12345 (z about $-23$). RANDM at n=1024: 1.68 and 1.73 (z = $-12$). A numpy simulation of 2048 distinct states halved ($k=2^{30}$) gives $1.96\\pm0.03$, so sampling without replacement does not explain the MINSTD deficit. For the mod-$2^{31}$ LCGs the short periods of the low-order bits are a plausible cause: at $b=30$, RANDU cells satisfy $c\\equiv0,1 \\pmod 4$, which predicts about 1.5 times the collisions (observed 1.7).",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD"
+   ],
+   "figure": "spacing_birthday.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S14",
+   "claim": "The 53-bit generators show genuine 53-bit birthday collisions at roughly the expected rate. Their $G_{\\rm eff}$ is consistent with $2^{53}$ but only weakly determined.",
+   "evidence": "Every stored MT19937 and RANNUM output times $2^{53}$ is an integer (checked on $1.56\\times10^6$ values each). Pooled over all scan blocks there are $2.83\\times10^{15}$ pairs per generator, so 0.31 collisions each are expected. Observed: 2 (MT) and 1 (RANNUM), verified as equal 53-bit integers at different draw indices (for example MT draws 313,270,567 and 327,679,012 both give 8935713578695022/$2^{53}$). Total 3 against 0.63 (Poisson P($\\ge3$) = 0.026, not significant given the number of tests). $G_{\\rm eff}=2^{50.3}$ (95% CI $2^{48.5}$ to $2^{53.4}$) for MT and $2^{51.3}$ ($2^{48.9}$ to $2^{56.6}$) for RANNUM.",
+   "generators": [
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "spacing_duplicates.png",
+   "category": "null_result",
+   "is_anomaly": false
+  },
+  {
+   "id": "S15",
+   "claim": "The even seed 65536 is catastrophic for RANDU and RANDM in every spacing test at the smallest sample size. RANDM is slightly less extreme than RANDU below the period, and both saturate identically beyond it.",
+   "evidence": "At $N=10^3$, R=$10^4$ the maximum-spacing Stouffer Z is $-87$ for RANDU (log10 p = $-1654$) and $-32$ for RANDM (log10 p = $-223$). The T histogram is a comb of discrete values on the $2^{-15}$ grid. At $N=10^4$ (> period 8192), T = $-7.38$ with sd $10^{-15}$ (deterministic). There are exactly 1808 repeats per replicate (= $10^4-8192$), and $G_{\\rm eff}$ = 8192.0 for $N\\ge10^5$. The minimum spacing is always $\\ge2^{-14}$: mean $n(n+1)m_n$ = 57 at $N=10^3$.",
+   "generators": [
+    "RANDU",
+    "RANDM"
+   ],
+   "figure": "spacing_maxgap_dist.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "S16",
+   "claim": "Two properties of the test design, rather than of the generators, matter when reading the p-values. First, the minimum-spacing test eventually hits the double-precision floor. Second, when R times N exceeds the period, consecutive replicates overlap and are no longer independent.",
+   "evidence": "Without the resolution-aware shift $\\delta=2^{j-53}$, MT at $N=10^8$ (one genuine tie in 5 replicates, probability about 4%) would be rejected outright with p = 0. With the shift, the block p is 0.09. For LOGISTIC at $N=10^6$, R=300 uses $3\\times10^8\\gg\\mu+\\lambda$ draws, so replicates are overlapping arcs of the 5.6M cycle: KS p = 5.6e-4 and sd(T) = 1.04 (underdispersed), while the Fisher p is about 1. This is why the scan's (N, R) plan keeps $RN\\le2^{29}$ for every block below $2^{29}$.",
+   "generators": [
+    "MT19937",
+    "LOGISTIC"
+   ],
+   "figure": "spacing_breakmap.png",
+   "category": "test_property",
+   "is_anomaly": false
+  }
+ ],
+ "figures": [
+  {
+   "file": "spacing_maxgap_dist.png",
+   "caption": "Distribution of the standardized maximum spacing $T=(n+1)M_n-\\ln(n+1)$ compared with its exact null law. MT19937 ($N=10^3$, $R=10^4$) and RANNUM ($N=10^6$, $R=300$) follow it. The logistic map is overdispersed (sd 1.47 instead of 1.26), and RANDU with the even seed 65536 produces a comb of discrete values because it has only 8192 states."
+  },
+  {
+   "file": "spacing_maxgap_scan.png",
+   "caption": "Maximum-spacing statistic against the draws per replicate for twelve configurations (points: replicates; line: block mean; band: Gumbel 0.1% to 99.9%). Good generators stay in the band up to $N=10^9$. LCGs collapse below it once $N$ approaches their period (dotted), and grid-limited outputs (RAND, REAL*4) rise above it once $N$ exceeds the number of grid values $G$ (dash-dot)."
+  },
+  {
+   "file": "spacing_breakmap.png",
+   "caption": "Block p-values ($-\\log_{10}p$, the Bonferroni-combined Fisher, KS and AD tests) of the maximum- and minimum-spacing tests for every configuration and sample size. The minimum spacing breaks the LCGs, RAND, R250 and single precision four to five decades earlier than the maximum spacing, which responds instead to period exhaustion and to grids with $G\\lesssim N$."
+  },
+  {
+   "file": "spacing_minspacing.png",
+   "caption": "Left: mean of $n(n+1)m_n$, which is 1 for iid points. LCGs cannot produce gaps below their state grid and follow the floor $n^2h$, while the logistic map sits at exactly 2 because its close pairs come in doubling chains. Right: fraction of replicates containing a tie, which follows $1-e^{-N^2/2G}$ with $G=2^{22}$ (RAND), $0.75\\cdot2^{25}$ (REAL*4) and $2^{32}$ (R250); MT19937 never ties."
+  },
+  {
+   "file": "spacing_duplicates.png",
+   "caption": "Left: number of repeated values $D(N)$ along one stream (lines) or per replicate (points), against the birthday prediction for $G$ equally likely values (dashed). RANDU produces no repeat at all before its period $2^{29}$ and exactly $N-2^{29}$ afterwards. Right: effective number of distinct values $G_{\\rm eff}$ with 95% intervals against theory; the permutation generators give only lower bounds, which exceed their true number of states by a factor of at least $2^{18}$."
+  },
+  {
+   "file": "spacing_lcg_period.png",
+   "caption": "Exact periods from Brent's algorithm for 56 seeds each of RANDU and RANDM: $\\lambda=2^{29-k}$ for seed $2^k\\times$odd, independent of the number of digits. The student's seed 65536 has $k=16$ and therefore period 8192; MINSTD has the full $2^{31}-2$."
+  },
+  {
+   "file": "spacing_maps.png",
+   "caption": "Top: complete enumeration of all $10^8$ middle-square seeds. There are only 17 terminal cycles, half of all seeds end at 0, and no seed yields more than 16,903 distinct numbers. Bottom: 1001 random starts of the double-precision logistic map end in one of six attractors after transients of up to $10^8$ steps, and 17.9% collapse to the fixed point 0."
+  },
+  {
+   "file": "spacing_birthday.png",
+   "caption": "Birthday-spacings test in one, two and three dimensions (mean collisions $\\bar Y/\\lambda$, which is 1 under the null). MT19937 and RANNUM stay at 1. LCGs fail once the number of cells exceeds their period (dotted, $n=(8\\rho)^{1/3}$), RANDU fails in 3D with only 256 points, and R250 shows a 10 to 25% excess in 1D and 2D; RAND coincides with MINSTD in 2D and 3D and is omitted there."
+  }
+ ],
+ "tables": [
+  {
+   "title": "Where each configuration first fails (first N, or n, with block p < 1e-3)",
+   "markdown": "| configuration | max spacing: first N (log10 p) | min spacing: first N (log10 p) | birthday 2D / 3D: first n | dominant mechanism |\n|---|---|---|---|---|\n| MT19937 | none up to 1e9 | none up to 1e9 | none / none (to 32768) | none (control) |\n| RANNUM | none up to 1e9 | none up to 1e9 | none / none | none (control) |\n| R250 | none up to 1e9 | 1e4 (-12.6) | 1290 / none | 32-bit grid (ties); unexplained 1D/2D birthday excess |\n| MINSTD | 2^29 (-4.1); 1e9 (-47.5) | 1e4 (-8.2) | 2048 / 4096 | period 2^31-2; no repeats inside period |\n| RANDU | 2^29 (< -300); drift at 1e8 (-2.5) | 1e4 (< -300) | 512 / 256 | period 2^29; 3D lattice |\n| RANDM | 2^29 (< -300) | 1e4 (< -300) | 1290 / 2048 | period 2^29; lattice |\n| RAND | 1e7 (-8.2) | 1e3 (< -300) | same as MINSTD | 2^22 output grid (truncated MINSTD) |\n| MT19937 (REAL*4) | 1e8 (-10.3) | 1e3 (< -300) | none / none | float grid, G_eff = 0.75*2^25 |\n| RANDU (REAL*4) | 1e8 (-7.8) | 1e3 (< -300) | not run | float grid plus LCG |\n| LOGISTIC | 1e3 (< -300) | 1e3 (< -300) | 203 / 256 | tent-map dynamics; cycle 5,638,349 |\n| RANDU / RANDM seed 65536 | 1e3 (< -300) | 1e3 (< -300) | not run | period 8192 |\n| MIDSQ seeds 777, 12345678 | 1e3 (< -300) | 1e3 (< -300) | 203 / 256 | collapse to 0 or a 100-cycle |"
+  },
+  {
+   "title": "Effective number of distinct values from birthday collisions",
+   "markdown": "| configuration | block used | repeats D | G_eff measured | theory |\n|---|---|---|---|---|\n| MIDSQ seed 12345678 | N=1e3, R=1e4 | 8,990,649 | 101 | 100 (terminal cycle) |\n| RANDU seed 65536 | N>=1e5 | 9.18e7 (N=1e5) | 8192.0 | 8192 (period) |\n| RAND | N=1e6, R=300 | 33,024,144 | 4.2023e6 +- 0.02% (2^22.003) | 2^31/511 = 4.2025e6 (not 2^22: 10 sigma) |\n| MT19937 (REAL*4) | N=1e5, R=1000 | 198,782 | 2.512e7 +- 0.22% (2^24.58) | 0.75*2^25 = 2.517e7 |\n| RANDU (REAL*4) | N=1e5, R=1000 | 189,303 | 2.638e7 +- 0.23% (2^24.65) | 2^35/1303 = 2.637e7 |\n| R250 | N=1e6, R=300 | 35,061 | 4.278e9 +- 0.53% (2^31.99) | 2^32 = 4.295e9 |\n| MT19937 | all blocks pooled | 2 | 2^50.3 (95% CI 2^48.5 to 2^53.4) | 2^53 |\n| RANNUM | all blocks pooled | 1 | 2^51.3 (95% CI 2^48.9 to 2^56.6) | 2^53 |\n| RANDU | N=1e8 window (largest pair count) | 0 | > 2^47.4 (95% lower bound) | 2^29 states: too few repeats |\n| MINSTD | largest pair count | 0 | > 2^49.4 | 2^31-2 states: too few repeats |\n| LOGISTIC | N <= 3e6 | 0 | no repeat below its cycle | cycle 5,638,349: D = N - lambda inside the cycle |"
+  },
+  {
+   "title": "Exact periods (Brent's algorithm on the integer state)",
+   "markdown": "| generator | seed(s) | trailing zeros k | period lambda | transient mu |\n|---|---|---|---|---|\n| RANDU, RANDM | 3, 77, 777, 7777, 12345, 77777, 314159 | 0 | 2^29 = 536,870,912 | 0 |\n| RANDU, RANDM | 777*2^k and 2^k, k = 1..24 | k | 2^(29-k) (all 96 cases) | 0 |\n| RANDU, RANDM | 65536 = 2^16 | 16 | 8192 | 0 |\n| RANDU, RANDM | 0 | n/a | 1 (fixed point) | 0 |\n| MINSTD | 1, 777 | n/a | 2^31-2 = 2,147,483,646 | 0 |\n| LOGISTIC (double) | 777 | n/a | 5,638,349 | 14,324,259 |\n| MIDSQ | 777 | n/a | 1 (fixed point 0) | 2 |\n| MIDSQ | 12345678 | n/a | 100 | 10,352 |\n| MIDSQ | 65536 | n/a | 1 (fixed point 0) | 6,489 |"
+  },
+  {
+   "title": "Middle-square: complete census of all 10^8 seeds (largest basins)",
+   "markdown": "| cycle (smallest element) | length | basin (fraction of seeds) | mean tail | max tail |\n|---|---|---|---|---|\n| 0 | 1 | 50.41% | 5587 | 16,902 |\n| 160000 | 100 | 33.95% | 3899 | 12,486 |\n| 810000 | 100 | 8.12% | 1134 | 3,837 |\n| 6250000 | 1 | 5.84% | 2046 | 4,689 |\n| 1760000 | 20 | 0.88% | 655 | 1,753 |\n| 4010000 | 20 | 0.41% | 434 | 1,491 |\n| 125360 | 115 | 0.19% | 364 | 947 |\n| 9 further cycles (lengths 1 to 209) | | 0.21% total | | |\n| all seeds | 17 cycles | mu+lambda: mean 4403, median 2696, max 16,903 | random map: sqrt(pi N/2) = 12,533 | |"
+  },
+  {
+   "title": "Double-precision logistic map: final attractors from 1001 starts",
+   "markdown": "| attractor | share (95% CI) | mean transient | median transient |\n|---|---|---|---|\n| cycle of length 5,638,349 | 66.6% (63.7 to 69.5) | 5.45e7 | 5.62e7 |\n| fixed point 0 (generator emits 0 forever) | 17.9% (15.5 to 20.3) | 9.35e6 | 9.64e6 |\n| cycle of length 14,632,801 | 10.2% (8.3 to 12.1) | 8.80e6 | 7.48e6 |\n| cycle of length 10,210,156 | 2.5% | 5.75e6 | 6.18e6 |\n| cycle of length 2,441,806 | 1.6% | 5.53e6 | 5.77e6 |\n| cycle of length 2,625,633 | 1.2% | 5.18e6 | 5.92e6 |"
+  },
+  {
+   "title": "Birthday spacings: mean collisions Y (null lambda = 2) and log10 p of the block",
+   "markdown": "| generator | t=1 n=1024 | t=1 n=2048 | t=2 n=2048 | t=2 n=8192 | t=3 n=256 | t=3 n=2048 | t=3 n=8192 |\n|---|---|---|---|---|---|---|---|\n| MT19937 | 1.99 (-0.1) | 1.95 (-0.6) | 1.96 (-0.4) | 2.11 (-0.6) | 2.00 (-0.0) | 1.98 (-0.2) | 2.14 (-0.9) |\n| RANNUM | 1.98 (-0.2) | 1.98 (-0.1) | 1.99 (-0.0) | 1.97 (-0.1) | 2.07 (-1.6) | 2.03 (-0.3) | 1.93 (-0.3) |\n| MT19937 REAL*4 | 7.58 (<-300) | 58.79 (<-300) | 1.96 (-0.4) | 2.10 (-0.5) | 2.00 (-0.0) | 1.98 (-0.2) | 2.15 (-1.0) |\n| R250 | 2.22 (-11) | 2.35 (-13) | 2.39 (-16) | 2.46 (-6) | 1.96 (-0.6) | 2.09 (-1.2) | 2.02 (-0.1) |\n| MINSTD | 1.89 (-3) | 1.27 (-66) | 2.21 (-5) | 18.19 (<-300) | 1.98 (-0.3) | 2.12 (-2) | 11.95 (<-300) |\n| RAND | 60.46 (<-300) | 416.21 (<-300) | 2.21 (-5) | 18.20 (<-300) | 1.98 (-0.3) | 2.12 (-2) | 11.95 (<-300) |\n| RANDU | 2.63 (-79) | 3.38 (-169) | 4.65 (<-300) | 162.13 (<-300) | 11.48 (<-300) | 91.71 (<-300) | 364.46 (<-300) |\n| RANDM | 1.68 (-25) | 3.45 (-183) | 5.38 (<-300) | 170.76 (<-300) | 2.01 (-0.1) | 2.68 (-45) | 36.84 (<-300) |\n| LOGISTIC | 2.41 (-35) | 2.41 (-18) | 1704 (<-300) | 7372 (<-300) | 207 (<-300) | 1962 (<-300) | 8081 (<-300) |\n| MIDSQ (12345678) | 1018 (<-300) | 2042 (<-300) | 2018 (<-300) | 8158 (<-300) | 181 (<-300) | 1962 (<-300) | 8111 (<-300) |"
+  }
+ ],
+ "code_files": [
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/spacing_scan.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/spacing_dups.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/period_lcg.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/period_midsq.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/period_logis.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/birthday.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/ms_stats.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/analyze_scan.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/blocks.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/bday_analyze.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/make_figs.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/run_scan.sh",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/run_dups.sh",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/run_bday.sh",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/debug/dumpwin.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/blocks.csv",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/bday_summary.csv",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/period_lcg.txt",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/midsq_cycles.txt",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/spacing/logis_survey.txt"
+ ],
+ "caveats": [
+  "I could not retrieve the Heinrich note. The CDF statistics web pages returned HTTP 403, the Wayback Machine was offline, and searches found no copy. The PDG Monte Carlo review cites 'J. Heinrich, CDF/MEMO/STATISTICS/PUBLIC/8032 (2006)' in its random-number paragraph, which may be the note the course cites, but I could not confirm its title or content. The test was therefore built from first principles, using the interval version with endpoints 0 and 1 and the exact Whitworth and Fisher law. The circle version was not computed.",
+  "In the far lower tail of the maximum spacing ($t<-2.5$) p-values come from the Poisson approximation. Checks against 80-digit arithmetic show it is conservative, by up to about 4 units of $\\ln F$ at $n=10^3$, so the reported extreme p-values are upper bounds.",
+  "Large-N blocks have few replicates (R = 5 at $10^8$, R = 1 at $2^{29}$, $10^9$ and $2^{31}-2$). Their p-values come from single replicates or Fisher's method. KS and AD are only used for $R\\ge40$, and AD uses the asymptotic law.",
+  "The 53-bit $G_{\\rm eff}$ for MT19937 and RANNUM rests on only 3 collisions. A precise measurement would need about $10^{10}$ to $10^{11}$ draws in a dedicated partitioned run, which I did not do because of the compute budget.",
+  "The logistic attractor shares come from 1001 starts (about $\\pm1.2$ to $1.5\\%$). I believe the cycle lengths 5,638,349 and 14,632,801 agree with published studies of the double-precision logistic map (e.g. Oteo and Ros 2007), but I did not verify that citation; please check it before citing it.",
+  "The birthday-spacings excess of R250 in 1D and 2D, and the 1D LCG anomalies at $k\\le\\rho$ (RANDU excess, MINSTD and RANDM deficit), are reproducible across 2 to 3 seeds, but their mechanisms are not established. For the mod-$2^{31}$ LCGs the low-order-bit periodicity is a plausible, only partly quantified explanation. The MINSTD deficit remains unexplained.",
+  "For LOGISTIC with $N\\ge10^4$, and for the seed-65536 cases, a block's total draws $RN$ exceed the cycle or period. Replicates then overlap, so moderate p-values in those blocks mix dynamics with overlap (see finding S16). The clean dynamical evidence for LOGISTIC is the $N=10^3$ block, which lies entirely inside the transient.",
+  "I did not run the bitmap long-stream duplicate count for MINSTD beyond $2^{31}$ (about 3 min); its period is known exactly from Brent. RANDM was not run in the bitmap test because its orbit set is identical to RANDU's. RANDU in REAL*4 and the seed-65536 cases were not run in the birthday-spacings test.",
+  "Eight figures were produced, one more than the suggested 7. If space is short, drop spacing_maxgap_dist.png, since its validation content is also summarized in spacing_breakmap.png.",
+  "The total compute was about 23 minutes of CPU (scan about 14.5 min, logistic survey 5.4 min, LCG periods 1.2 min, birthday 1.2 min, other runs about 1 min). The machine was heavily loaded (load average up to 53), so wall times were longer."
+ ],
+ "rnglib_issues": [
+  "No bugs found in rnglib.f90. Every generator used here was reproduced independently and agreed exactly: RANDU, RANDM and MINSTD states for $10^6$ steps, middle-square states for $10^5$ steps, and logistic outputs bit for bit for $10^6$ steps.",
+  "Inconvenience, not a bug: the logistic state st_logis is private and rng_state_int returns -1 for it. My period code therefore re-implements the map; it was verified bitwise against rng_next(G_LOGIS).",
+  "Property worth documenting: MIDSQ with any seed below $10^4$ (including the default student seed 777) decreases monotonically to the absorbing state 0, since $\\lfloor x^2/10^4\\rfloor<x$. With seed 777, rng_next returns 0 from the second draw on.",
+  "Minor and harmless: with rng_single=.true., values that round to 1.0 are mapped to the largest float below 1. The top float $1-2^{-24}$ therefore has 1.5 times the probability of its neighbours. This had no measurable effect here.",
+  "Consistency check of the earlier RAND discovery: RAND and MINSTD give identical birthday-spacing collision counts in every 2D and 3D block (cells use at most 16 bits per coordinate). Their duplicate rate implies $G_{\\rm eff}=2^{31}/511$ rather than $2^{22}$, both as expected if RAND = floor($2^{22}\\times$MINSTD)/$2^{22}$."
+ ],
+ "references": [
+  "W. A. Whitworth, Choice and Chance, 5th ed. (Deighton Bell, Cambridge, 1897).",
+  "R. A. Fisher, 'Tests of significance in harmonic analysis', Proceedings of the Royal Society of London A 125, 54-59 (1929).",
+  "D. A. Darling, 'On a class of problems related to the random division of an interval', Annals of Mathematical Statistics 24, 239-253 (1953).",
+  "R. Pyke, 'Spacings', Journal of the Royal Statistical Society B 27, 395-449 (1965).",
+  "J. Heinrich, CDF/MEMO/STATISTICS/PUBLIC/8032, CDF Collaboration note (2006), as cited in the PDG review of Monte Carlo techniques; not retrieved.",
+  "S. Navas et al. (Particle Data Group), 'Review of Particle Physics', Physical Review D 110, 030001 (2024), Section 42: Monte Carlo Techniques.",
+  "R. P. Brent, 'An improved Monte Carlo factorization algorithm', BIT Numerical Mathematics 20, 176-184 (1980).",
+  "D. E. Knuth, The Art of Computer Programming, Vol. 2: Seminumerical Algorithms, 3rd ed. (Addison-Wesley, Reading MA, 1997).",
+  "G. Marsaglia, 'A current view of random number generators', in Computer Science and Statistics: Proceedings of the 16th Symposium on the Interface (Elsevier, 1985), pp. 3-10.",
+  "P. L'Ecuyer and R. Simard, 'On the performance of birthday spacings tests with certain families of random number generators', Mathematics and Computers in Simulation 55, 131-137 (2001).",
+  "P. L'Ecuyer and R. Simard, 'TestU01: A C library for empirical testing of random number generators', ACM Transactions on Mathematical Software 33(4), Article 22 (2007).",
+  "G. Marsaglia and J. Marsaglia, 'Evaluating the Anderson-Darling distribution', Journal of Statistical Software 9(2), 1-5 (2004).",
+  "S. K. Park and K. W. Miller, 'Random number generators: good ones are hard to find', Communications of the ACM 31, 1192-1201 (1988).",
+  "S. Kirkpatrick and E. P. Stoll, 'A very fast shift-register sequence random number generator', Journal of Computational Physics 40, 517-526 (1981).",
+  "M. Matsumoto and T. Nishimura, 'Mersenne twister: a 623-dimensionally equidistributed uniform pseudo-random number generator', ACM Transactions on Modeling and Computer Simulation 8, 3-30 (1998).",
+  "D. Blackman and S. Vigna, 'Scrambled linear pseudorandom number generators', ACM Transactions on Mathematical Software 47(4), Article 36 (2021).",
+  "J. von Neumann, 'Various techniques used in connection with random digits', National Bureau of Standards Applied Mathematics Series 12, 36-38 (1951).",
+  "P. Flajolet and A. M. Odlyzko, 'Random mapping statistics', in Advances in Cryptology: EUROCRYPT '89, Lecture Notes in Computer Science 434, 329-354 (Springer, 1990).",
+  "C. Grebogi, E. Ott and J. A. Yorke, 'Roundoff-induced periodicity and the correlation dimension of chaotic attractors', Physical Review A 38, 3688-3692 (1988).",
+  "J. A. Oteo and J. Ros, 'Double precision errors in the logistic map: statistical study and dynamical interpretation', Physical Review E 76, 036214 (2007). Citation not verified.",
+  "A. M. Ferrenberg, D. P. Landau and Y. J. Wong, 'Monte Carlo simulations: hidden errors from good random number generators', Physical Review Letters 69, 3382-3384 (1992)."
+ ]
+}

@@ -1,0 +1,322 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}}
+\captionsetup{font=small,labelfont=bf}
+\newcommand{\fig}[3]{%
+  \begin{figure}[htbp]\centering
+  \includegraphics[width=#2\textwidth]{#1}
+  \caption{#3}\label{fig:#1}
+  \end{figure}}
+
+\title{Project 1, Part 2: Hunting for Anomalies in Pseudorandom Number Generators\\[4pt]
+\large PHYS 25000, Computational Physics}
+\author{}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We test nine pseudorandom number generators with seven families of methods, going well beyond the one-dimensional histogram of Part 1. They include deep histograms with an exact finite-period theory, triplet correlations and the exact spectral test, the frequency of decimal digits at deep positions, bit-level identities, maximum and minimum spacings, birthday collisions, exact period measurements, and a physics application: the two-dimensional Ising model. Every generator except the two modern ones (MT19937 and gfortran's \texttt{RANDOM\_NUMBER}) shows at least one statistically decisive anomaly, and nearly every anomaly is explained quantitatively. Highlights: RANDU's triplets lie on 15 planes, which makes a Monte Carlo estimate of the unit-ball volume converge to $3.15432$ instead of $\pi$ ($+60\sigma$); the course's RANDM, whose multiplier differs from RANDU's by one digit, is the better of the two in three dimensions but the worse in two, and it has a detectable lag-one correlation equal to $1/6539$; the intrinsic \texttt{RAND()} is the Park-Miller generator truncated to only $2^{22}$ output values; and the shift-register generator R250, which passes the histogram, digit and maximum-spacing tests, gives a specific heat of the critical Ising model that is wrong by $3.5\%$ ($-47\sigma$) under Wolff cluster updates, reproducing the classic result of Ferrenberg, Landau and Wong. The seed question from Part 1 is settled exactly: the period of RANDU or RANDM is $2^{29-k}$ for a seed with $k$ trailing zero bits, so oddness matters and the number of digits does not.
+\end{abstract}
+
+\section{Introduction}
+
+In Part 1 we sorted random numbers into histogram bins and looked for statistically significant deviations. Two lessons emerged. First, at a shallow depth ($10^5$ bins, $10^7$ draws) RANDU, RANDM and \texttt{RAND()} are indistinguishable. Second, at a deep level ($10^7$ bins, $10^9$ draws) all three misbehave, but in ways that a single histogram cannot fully explain: RANDU and RANDM give bins that are too even, \texttt{RAND()} leaves 58\% of the bins empty, and storing the numbers in \texttt{REAL} adds steps at $x = 1/8, 1/4, 1/2$.
+
+This part asks a broader question: what kinds of nonrandomness hide in these generators, and which test exposes each kind? A pseudorandom generator is a deterministic map on a finite state space, so it always has structure. A good generator hides that structure from every test that matters for the application. We therefore use tests that probe different structures (the marginal distribution, correlations between successive values, the arithmetic of the output, and the finite state space) and finish with a physical simulation in which a subtle correlation produces a wrong physical answer.
+
+As the assignment permits, this part of the project was produced with the assistance of Claude (Anthropic). All code is in the folder \texttt{P1\_Claude}: the shared generator library \texttt{rnglib.f90}, the rewritten course program \texttt{rnd\_test\_claude.f}, and one subfolder of \texttt{tests/} per test family.
+
+\section{Generators and implementation}
+
+All tests call one Fortran 90 module, \texttt{rnglib.f90}, so that every result comes from a single implementation of each generator. Table~\ref{tab:gens} lists the nine generators. Two of them are deliberate negative controls: von Neumann's middle-square method and the chaotic logistic map.
+
+\begin{table}[htbp]\centering\small
+\caption{The nine generators. $k$ denotes an integer state; ``values'' is the number of distinct outputs.}\label{tab:gens}
+\begin{tabular}{@{}l>{\raggedright}p{5.6cm}lll@{}}
+\toprule
+Name & Recurrence & Output & Values & Period \\
+\midrule
+RANDU & $k_{n+1} = 65539\,k_n \bmod 2^{31}$ (IBM) & $k/2^{31}$ & $2^{29}$ & $2^{29}$ \\
+RANDM & $k_{n+1} = 6539\,k_n \bmod 2^{31}$ (course \texttt{example3.f}) & $k/2^{31}$ & $2^{29}$ & $2^{29}$ \\
+RAND & gfortran intrinsic \texttt{RAND()} (\texttt{example4.f}) & $\lfloor (k-1)/2^9\rfloor/2^{22}$ & $2^{22}$ & $2^{31}-2$ \\
+MINSTD & $k_{n+1} = 16807\,k_n \bmod (2^{31}-1)$ (Park-Miller) & $k/(2^{31}-1)$ & $2^{31}-2$ & $2^{31}-2$ \\
+R250 & $w_n = w_{n-103}\oplus w_{n-250}$ on 32-bit words & $w/2^{32}$ & $2^{32}$ & $2^{250}-1$ \\
+RANNUM & gfortran \texttt{RANDOM\_NUMBER} (xoshiro256**) & 53 bits & $2^{53}$ & $2^{256}-1$ \\
+MT19937 & Mersenne Twister & 53 bits & $2^{53}$ & $2^{19937}-1$ \\
+MIDSQ & middle 8 digits of $k_n^2$ & $k/10^{8}$ & $\le 10^8$ & short \\
+LOGISTIC & $y_{n+1} = 4y_n(1-y_n)$ in double precision & $\tfrac{2}{\pi}\arcsin\sqrt{y}$ & finite & finite \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Validation.} Each implementation was checked against published reference values: RANDU from seed 1 gives the states 65539, 393225, 1769499 and from seed 314159 reproduces the triplets of the course handout, with $9x-6y+z$ exactly integer; MINSTD from seed 1 gives $z_{10000} = 1043618065$, the Park-Miller check value; MT19937 from seed 5489 gives the reference outputs 3499211612 and 581869302, and NumPy's \texttt{RandomState(777)} reproduces our stream exactly; R250 satisfies its recurrence for every word. Independent re-implementations in each test family agreed with the library bit for bit.
+
+\paragraph{What \texttt{RAND()} really is.} Running \texttt{RAND()} next to MINSTD from the same seed shows that gfortran's intrinsic is the Park-Miller generator with its output truncated:
+\begin{equation}
+\texttt{RAND()} = \left\lfloor \frac{k-1}{2^9} \right\rfloor 2^{-22},
+\end{equation}
+with zero mismatches in $2\times 10^8$ draws. It therefore has only $2^{22} = 4{,}194{,}304$ distinct values, and each of them is produced by exactly 512 MINSTD states per period. This single identity explains every \texttt{RAND()} anomaly in this report, including the empty bins of Part 1.
+
+\paragraph{Variables in single precision.} To emulate a \texttt{REAL} variable holding the random number, the library can round every output to IEEE single precision (24-bit mantissa) before returning it. We call this the \texttt{REAL*4} mode.
+
+\section{Deep histograms and the finite-period law}
+
+\subsection{Method}
+The course program was rewritten (\texttt{rnd\_test\_claude.f}) to run any generator, in either precision, with any number of bins $B$ and draws $N$. It reports compact statistics instead of a per-bin file. The main one is the dispersion index
+\begin{equation}
+D = \frac{s^2}{\bar n}, \qquad \bar n = N/B,
+\end{equation}
+where $s^2$ is the variance of the bin counts. For independent uniform draws the counts are Poisson, so $D = 1$ within about $\sqrt{2/B}$. $D < 1$ means the bins are too even, and $D > 1$ too uneven. We also report the $\chi^2$ statistic with its $z$-score, the number of empty bins, the number of bins beyond $4\sigma$, and the full count-of-counts table (how many bins received exactly $k$ hits). We scanned the depth from $B = 10$ to $B = 10^8$ at 100 expected hits per bin (10 at $B=10^8$).
+
+\subsection{Theory: why the bins are too even}
+A generator with period $P$ visits each reachable value exactly once per period. Drawing $N<P$ values is therefore sampling \emph{without replacement} from a finite population, and the Poisson variance is reduced by the finite-population factor:
+\begin{equation}
+D \approx 1 - \frac{N}{P}.
+\end{equation}
+More generally, after $N = qP + r$ draws the count in bin $b$ is $n_b = q\,c_b + \mathrm{Hyp}(P, c_b, r)$, where $c_b$ is the number of reachable values in bin $b$ and $\mathrm{Hyp}$ is hypergeometric. For \texttt{REAL*4} storage, the bin probabilities follow instead from the widths of the single-precision rounding cells. This model has no free parameters.
+
+\subsection{Results}
+Figure~\ref{fig:hist_depth_scan} is the depth scan. MT19937, RANNUM and R250 stay at $D = 1$ at every depth (largest $|z| = 2.3$ over 24 runs), so the test does not flag good generators. Every other generator fails beyond a depth that the theory predicts. Across all 112 depth-scan points of the non-logistic generators, the measured $D$ agrees with the prediction within $1.95$ standard deviations (rms $0.84$). The main cases at $B = 10^7$, $N = 10^9$ are:
+\begin{itemize}
+\item \textbf{RANDU and RANDM} (period $2^{29}$, here $q=1$): predicted $D = 0.07107$, measured $0.07102$ and $0.07105$. Their bin counts span only 84 to 108, instead of roughly 60 to 140. RANDU and RANDM visit the same $2^{29}$ states (odd states congruent to 1 or 3 mod 8) in different orders, so their histograms are statistically identical.
+\item \textbf{MINSTD}: $N$ is about half its period, so $D = 1 - N/P$; predicted $0.5347$, measured $0.5348$. At $B = 10^8$ only 146 bins are empty, against $4540 \pm 67$ for Poisson.
+\item \textbf{RAND}: exactly $10^7 - 2^{22} = 5{,}805{,}696$ bins are empty. Each filled bin holds 512 MINSTD states, so its count is $\mathrm{Binomial}(512, N/P)$ with mean 238.42 and standard deviation 11.287; we measured 238.42 and 11.284 (Fig.~\ref{fig:hist_count_of_counts}).
+\end{itemize}
+
+\fig{hist_depth_scan}{1.0}{Depth scan with 100 expected hits per bin (10 at $B=10^8$), seed 777, double precision. Left: dispersion index $D$. Middle: $\chi^2$ $z$-score (symmetric log axis). Right: fraction of empty bins. Gray bands are the ideal $\pm3\sigma$ ranges. MT19937, RANNUM and R250 stay at $D=1$; RANDU, RANDM (identical curves) and MINSTD drop below 1 as the number of draws approaches their periods, while RAND, LOGISTIC and MIDSQ blow up.}
+
+\fig{hist_count_of_counts}{1.0}{Count-of-counts (fraction of bins receiving exactly $k$ hits) at $B=10^7$, $N=10^9$, against the ideal Poisson(100) (dashed) and the finite-period model (solid). This is the fair side-by-side comparison of the generators. RANDU and RANDM are far narrower than Poisson, MINSTD has half the Poisson variance, and RAND splits into a spike of empty bins (58\%) and a Binomial(512, 0.466) bump at 238. LOGISTIC forms a comb at multiples of its cycle visits.}
+
+\paragraph{The Part 1 test already detects RANDU.} The theory predicts that a generator of period $P$ fails the 100-hits-per-bin test at $3\sigma$ once $N \gtrsim 12\,P^{2/3}$, because $z \approx -(N/P)\sqrt{(B-1)/2}$. For the Part 1 configuration ($B=10^5$, $N=10^7$) this gives $z = -4.17$ for RANDU and RANDM. Over 200 seeds we measured a mean $z$ of $-3.94$ (RANDU) and $-4.21$ (RANDM); seed 777 gives $z=-4.41$ (Fig.~\ref{fig:hist_seed_study}). The long-period generators scatter around zero. The anomaly is a $\chi^2$ that is too \emph{small}. The course program's criterion (counting bins more than $4\sigma$ from the mean) cannot see it, because a too-even histogram has fewer outliers, not more.
+
+\fig{hist_seed_study}{1.0}{Left: $\chi^2$ $z$-score of the Part 1 test ($B=10^5$, $N=10^7$) for 200 seeds per generator. RANDU and RANDM sit near the predicted $z=-4.17$ (tick) in almost every run, while the long-period generators scatter around 0. Right: at $B=100$, $N=10^4$ the logistic map's $z$ distribution is wider than $N(0,1)$ even though its mean $D$ is 0.99, a signature of serial correlation.}
+
+\paragraph{Single precision.} Storing any generator in \texttt{REAL*4} makes the histogram too uneven at $B\ge 10^6$. Between $2^{-g-1}$ and $2^{-g}$ the single-precision spacing is constant, so a bin of width $1/B$ contains either $\lfloor w\rfloor$ or $\lceil w\rceil$ representable numbers, where $w$ is the bin width in units of the local spacing. The rounding-cell model predicts $D = 5.45$ at $B=10^7$ and $D=31.5$ at $B = 10^8$ for a continuous source, and MT19937, RANNUM and R250 in \texttt{REAL*4} give $5.454$ and $31.46$. Figure~\ref{fig:hist_single_precision} shows the resulting steps at every power of two, which are the steps seen in Part 1. This is a property of the storage, not of the generator.
+
+\fig{hist_single_precision}{1.0}{Top: dispersion index within blocks of $10^4$ consecutive bins at $B=10^7$, $N=10^9$, for numbers stored in \texttt{REAL*4}. Steps occur at every power of two, as the rounding model (dashed) predicts; MINSTD and RANDU are shifted down by their period deficits. Bottom: the resulting multimodal count-of-counts; each peak corresponds to bins holding 1, 2, 3 or 4 representable floats.}
+
+\paragraph{Even seed and negative controls.} With the Part 1 seed 65536, RANDU and RANDM reduce to the same 8192 values, and the histogram becomes deterministic: $D$ swings from 0.14 at $B=100$ to $1.2\times10^5$ at $B=10^7$, exactly as predicted. MIDSQ with seed 777 reaches the absorbing state 0 at the second draw ($777^2/10^4 = 60$, $60^2/10^4 = 0$), so it is a constant. The logistic map, supposedly chaotic, turns out to be periodic in double precision: from seed 777 it enters a cycle of $5{,}638{,}349$ states after $14{,}324{,}259$ steps (Section~\ref{sec:periods}).
+
+\section{Triplets, hyperplanes and the spectral test}
+
+\subsection{RANDU's fifteen planes}
+For RANDU, $a = 65539 = 2^{16}+3$, so $a^2 \equiv 6a - 9 \pmod{2^{31}}$ and
+\begin{equation}
+9x_k - 6x_{k+1} + x_{k+2} \in \mathbb{Z}.
+\end{equation}
+Every triplet therefore lies on one of 15 parallel planes ($9x-6y+z = j$, $j = -5,\dots,9$), spaced $1/\sqrt{118} = 0.0921$ apart. We verified this in integer arithmetic for $10^7$ triplets and over the full period. The planes hold the fractions $(1,3,5,7,9,11,12,12,12,11,9,7,5,3,1)/108$ predicted by the geometry ($\chi^2 = 11.6$ on 14 degrees of freedom, $p = 0.64$). Single-precision storage does not remove the planes; it thickens them by only $3\times10^{-7}$ (Fig.~\ref{fig:lattice_randu_planes}).
+
+\fig{lattice_randu_planes}{0.95}{Top: 12000 RANDU triplets seen from a generic angle (no structure visible) and rotated so that the line of sight lies within the planes (15 planes appear), next to MT19937 from the same direction. Bottom left: distribution of $9x_k-6x_{k+1}+x_{k+2}$ for $10^7$ triplets; all RANDU mass falls on the integers $-5$ to 9, while MT19937 follows the continuous density. Bottom right: plane populations against the geometric shares.}
+
+\subsection{The exact spectral test}
+Every multiplicative linear congruential generator (LCG) places its $t$-tuples on a lattice, which is covered by families of parallel hyperplanes. The spectral test computes $\nu_t$, the length of the shortest vector of the dual lattice; the hyperplanes of that family are $1/\nu_t$ apart. The normalized figure of merit is
+\begin{equation}
+S_t = \frac{\nu_t}{\gamma_t^{1/2}\,m^{1/t}},
+\end{equation}
+with Hermite constants $\gamma_t$, so that $S_t = 1$ is the best possible lattice. We computed $\nu_t$ exactly for $t = 2$ to 8 (LLL reduction followed by exhaustive Fincke-Pohst enumeration in exact integer arithmetic) and confirmed all 43 predicted plane families by enumerating every tuple of the full period.
+
+One subtlety matters for RANDU and RANDM: with $m = 2^{31}$, $a\equiv 3 \pmod 8$ and an odd seed, the reachable states are only those congruent to $x_0$ or $3x_0$ modulo 8. The correct lattice has modulus $2^{30}$, not $2^{31}$ (which overstates the quality) or $2^{29}$.
+
+\fig{lattice_spectral_merit}{1.0}{Left: exact normalized spectral figure of merit $S_t$ for $t=2$ to 8. RANDU collapses at $t=3$ ($S_3=0.0095$), and RANDM is weakest at $t=2$ ($S_2=0.19$); open markers show the true largest gap after the coset correction. Right: number of occupied hyperplanes in the shortest-dual-vector family, compared with Marsaglia's upper bound $(t!\,m)^{1/t}$.}
+
+Figure~\ref{fig:lattice_spectral_merit} summarizes the result. RANDU has the worst value of all 35 (generator, dimension) pairs: $S_3 = 0.0095$, with 15 planes where Marsaglia's bound allows up to 2344. Its 4D to 6D values are also poor ($S_t\le 0.26$). The reference multipliers are not perfect either: MINSTD (16807) is weakest in 2D ($S_2 = 0.34$), the ``improved'' Park-Miller multiplier 48271 is weak in 8D, and 69069 is weak in 6D. All LCGs have planes; only the severity differs.
+
+\subsection{The ``small but significant'' difference between RANDM and RANDU}
+The two multipliers differ by one digit, 6539 versus 65539, and the spectral test shows that they fail in \emph{opposite} dimensions. RANDU is good in 2D ($S_2 = 0.66$) and catastrophic in 3D. RANDM is the worst of the five LCGs in 2D: every pair lies on one of 6539 lines $6539x_k - x_{k+1} = j$, and whenever $x_k < 1/6539$ the next value is exactly $x_{k+1} = 6539\,x_k$ (Fig.~\ref{fig:lattice_randm_structure}). From 3D upward, however, RANDM is far better than RANDU: its 3D planes are the 818 planes of $25x_k + 115x_{k+1} + 678x_{k+2}\in\mathbb{Z}+\tfrac12$, giving $S_3 = 0.60$.
+
+The weak 2D lattice of RANDM has a direct statistical consequence. For a multiplicative LCG, the lag-one serial correlation is approximately $1/a$. Computing it exactly over RANDM's full period gives $r_1 = 1.5293\times10^{-4} \approx 1/6539$, which over $N = 2^{29}$ values is a $3.5\sigma$ effect (Fig.~\ref{fig:battery_lagcorr}). For RANDU, $r_1 = 1.36\times10^{-5}$ is ten times smaller and undetectable ($0.3\sigma$). So RANDM has a measurable pair correlation that RANDU lacks, while RANDU has a triplet structure that RANDM lacks.
+
+\fig{lattice_randm_structure}{0.95}{Top: RANDM pairs with $x_k<3/6539$ lie exactly on the lines $x_{k+1}=6539x_k-j$ (RANDM's 2D weakness), while MT19937 fills the same strip uniformly. Bottom: RANDM triplets in a slab eight plane spacings wide along $\mathbf{s}=(25,115,678)$ fall on 8 planes, so its 3D lattice is about 75 times finer than RANDU's.}
+
+\fig{battery_lagcorr}{1.0}{Lag-$k$ serial correlation in units of its standard error, $z_k=\sqrt{N-k}\,r_k$, for $k=1$ to 300 (dashed lines: $\pm3$). For RANDU and RANDM the sums run over the full period, and the measured values (filled) coincide with the exact Dedekind-sum theory (open circles). RANDM has $z_1 = 3.5$, i.e.\ $r_1\approx 1/6539$; RANDU's corresponding value is ten times smaller. The full-period sums are also too close to zero at all other lags ($Q_{300}=\sum z_k^2$ of 0.2 and 12.6 instead of about 300), another face of period exhaustion.}
+
+\subsection{Monte Carlo integrals that the lattice breaks}
+Each LCG has an elementary integrand that it gets completely wrong. If $\mathbf{s}$ is a shortest dual vector, then
+\begin{equation}
+I = \int_{[0,1)^t} \cos\!\big(2\pi\,\mathbf{s}\cdot\mathbf{x}\big)\,d\mathbf{x} = 0,
+\end{equation}
+but for the owning generator $\mathbf{s}\cdot\mathbf{x}$ is always an integer (for RANDU, $\mathbf{s} = (9,-6,1)$), so the Monte Carlo estimate is exactly 1 with zero sample variance at every $N$. At $N = 10^7$ this is a $4472\sigma$ error, and the naive error bar is zero, so the wrong answer is reported with infinite confidence (Fig.~\ref{fig:lattice_mc_killer}). Each killer integrand fails only for its own generator; MT19937 and RANNUM pass all of them.
+
+\fig{lattice_mc_killer}{0.9}{Monte Carlo estimates of $\int\cos 2\pi(\mathbf{s}\cdot\mathbf{x}-\varphi)\,d\mathbf{x}=0$ built from each LCG's shortest dual vector, against the number of tuples $N$. The owning LCG returns exactly 1 with zero error bar at every $N$; MT19937 and RANNUM converge to 0 inside the $\pm 2/\sqrt{2N}$ band.}
+
+Less contrived 3D calculations fail too (Fig.~\ref{fig:lattice_isotropy}):
+\begin{itemize}
+\item \textbf{Volume of the unit ball.} Hit-or-miss Monte Carlo with RANDU triplets converges to $\hat\pi = 3.15426 \pm 0.00021$ at $2\times10^8$ triplets, $60\sigma$ above $\pi$. With RANDU, 3D Monte Carlo is really a quadrature on 15 planes, whose exact value $3.1543170$ we reproduce analytically. RANDM, MINSTD and MT19937 give $\pi$ within $1\sigma$.
+\item \textbf{Isotropic directions.} Directions generated by rejection from the cube are grossly anisotropic: 13.75\% of all directions lie exactly on the great circle perpendicular to $(9,-6,1)$, and the band $0 < |\cos\theta| < 2/\sqrt{118} = 0.184$, which covers 18.4\% of the sphere, receives no directions at all.
+\item \textbf{An ideal gas that diffracts.} Particles placed at RANDU triplets produce a Bragg peak in the structure factor, $S(9,-6,1) = N$ exactly, as if the gas were a crystal.
+\end{itemize}
+
+\fig{lattice_isotropy}{1.0}{Top left: hit-or-miss estimate of $\pi$ from the volume of the unit ball; RANDU converges to the 15-plane quadrature value 3.15432 (dotted), not to $\pi$. Top right and bottom: directions from cube rejection with RANDU follow the 15-plane theory, with 13.8\% of all directions on one great circle and an empty belt $0<|\cos\theta|<0.184$; the MT19937 sky map is uniform.}
+
+\section{Decimal digits and bits}
+
+\subsection{Digits at deep decimal positions}
+For each generator we took the decimal digit $d_p = \lfloor x\,10^p\rfloor \bmod 10$ at positions $p = 1$ to 60 for $N = 10^8$ outputs and tested its frequency with a $\chi^2$ test (9 degrees of freedom). A first finding concerns the test itself: computing $\lfloor x\,10^p\rfloor$ in floating point fails for \emph{every} generator, MT19937 included, at $p = 16$ in double precision and $p = 8$ in \texttt{REAL*4}, because $x\,10^p$ then exceeds $2^{53}$ (or $2^{24}$) and rounds to even integers. All results below therefore use exact integer arithmetic on the exact value of each output.
+
+With exact digits, a source with $B$-bit resolution first fails not at the naive depth $B\log_{10}2$ but at
+\begin{equation}
+p^* \approx B - \tfrac12\log_2 N + 1.3,
+\end{equation}
+which is about $B - 11$ for $N = 10^8$. The measured breaking depths agree (Fig.~\ref{fig:digits_heatmap}): RAND ($B = 22$) fails at $p = 10$, R250 ($B = 32$) at 21, MT19937 and RANNUM (53 bits) at 42, and any generator stored in \texttt{REAL*4} at 13. The exact rational digits of MINSTD never fail.
+
+RANDU and RANDM behave differently. Their digits are exactly periodic, with period $2^{30-p}$ in the digit $d_p$, so within a period every digit appears almost exactly equally often. The digit test is therefore \emph{too uniform} at $p = 5$ to 14 ($\chi^2$ as small as 0.017 where 9 is expected; left-tail $p$-values down to $10^{-11}$), and deterministically nonuniform from $p = 17$. This is the decimal analogue of the too-even histogram bins.
+
+\fig{digits_heatmap}{1.0}{Signed significance of the digit-frequency $\chi^2$ test ($N=10^8$) at each decimal position $p$. Red is nonuniform, blue is too uniform, near-white is consistent with uniform. Exact digits fail at a depth set by each generator's resolution: RAND at 10, R250 at 21, RANDU and RANDM at 17 after a too-uniform band at $p=5$ to 14. Naive floating-point extraction fails for every generator at $p=16$ in double and $p=8$ in \texttt{REAL*4}. LOGISTIC fails everywhere at $10^8$ draws because of its cycle.}
+
+\subsection{Bit-level structure}
+Writing $x = \sum_j b_j 2^{-j}$, the low-order bits of a power-of-two-modulus LCG are far from random. For RANDU and RANDM, bit $j$ of $k/2^{31}$ has period exactly $2^{30-j}$ for $j\le 28$; bit 29 is stuck at 0, bit 30 alternates, and bit 31 is stuck at 1. Because $65539\equiv 3 \pmod{2^{16}}$, the low 16 bits of RANDU's state evolve by multiplication by 3, which gives bits 16 to 27 a lag-one autocorrelation of almost exactly $+1/3$ (measured $0.3333$ and $0.3335$ for bits 16 and 17, matching the full-period theory to six decimals). The Berlekamp-Massey algorithm, which finds the shortest linear feedback shift register that generates a bit stream, gives a linear complexity of exactly $2^{29-j}+1$ for RANDU bit $j$ (Fig.~\ref{fig:digits_lcgbits}).
+
+\fig{digits_lcgbits}{1.0}{Exact low-order structure of RANDU and RANDM. (a) Measured period of bit $j$, equal to $2^{30-j}$. (b) Period of the decimal digit $d_p$, equal to $2^{30-p}$. (c) Lag-one bit autocorrelation, measured (markers) and computed over the full orbit (dashed); the $1/3$ plateau comes from $65539\equiv3 \pmod{2^{16}}$. (d) Berlekamp-Massey linear complexity, equal to $2^{29-j}+1$.}
+
+Three further bit identities are exact (Fig.~\ref{fig:digits_xor}):
+\begin{itemize}
+\item \textbf{R250} obeys $b_j(n)\oplus b_j(n-103)\oplus b_j(n-250) = 0$ in all 32 bits with zero violations in $5\times10^7$ tests per bit, against 50\% for MT19937. A blind scan of all 179{,}700 lag pairs up to 600 rediscovers exactly $(103,250)$ and its square $(206,500)$, and nothing else. Its linear complexity is exactly 250 (and exactly 19937 for MT19937, which is also linear over GF(2)).
+\item \textbf{LOGISTIC}'s output is, bit for bit, the previous output shifted by one place: $b_j(n) = b_{j+1}(n-1)\oplus b_1(n-1)$, exactly for $j \le 26$. This follows from its conjugacy to the tent map. Each 53-bit output therefore carries only about 5 new bits, yet the standard per-bit lag-one test does not see it.
+\item \textbf{MINSTD} stored as a double copies bits 1 to 22 into bits 32 to 53, because $k/(2^{31}-1)$ has a binary expansion of period 31. The copy is broken only by the rounding carry at bit 53.
+\end{itemize}
+
+\fig{digits_xor}{1.0}{Hidden bit identities. (a) R250 obeys its recurrence in every bit with zero violations, while the controls give 1/2. (b) The logistic output is a one-bit shift of the previous output, exactly in bits 1 to 26. (c) MINSTD doubles copy bits 1 to 22 into bits 32 to 53, broken only by the rounding carry. (d) A blind scan of 179,700 lag pairs flags only the two R250 lags.}
+
+\section{Spacings, collisions and periods}
+
+\subsection{Maximum spacing}
+The assignment suggests the maximum-spacing method of J.~Heinrich. We could not retrieve the original CDF note (it is cited in the Particle Data Group review of Monte Carlo techniques), so we implemented the test from first principles. Sort $n$ uniform points and let $M_n$ be the largest gap. Under the null hypothesis
+\begin{equation}
+P(M_n\le x) = \sum_{k\ge 0}(-1)^k\binom{n+1}{k}\big(1-kx\big)_+^{\,n},
+\qquad T = (n+1)M_n - \ln(n+1) \;\longrightarrow\; \text{Gumbel}.
+\end{equation}
+We compared the distribution of $T$ with the exact law for up to $10^4$ replicates per sample size, for $N$ from $10^3$ to $2^{31}$ draws.
+
+MT19937 and RANNUM pass every block up to $N = 10^9$ (smallest $p = 0.012$ among 24 blocks, which is not significant after correcting for multiple tests). For the LCGs, the maximum spacing detects period exhaustion rather than the lattice. RANDU drifts low already at $N = 10^8$ (mean $T = -0.81$ against the null 0.58 and our prediction $-0.85$) and collapses to the deterministic value $T = -13.06$ at $N = 2^{29}$, where every reachable point appears once. It detects output grids only when $N$ is comparable to the number of grid values: \texttt{RAND()} fails at $N = 10^7$ (KS $p = 2\times10^{-9}$) and \texttt{REAL*4} storage at $10^8$ (Fig.~\ref{fig:spacing_maxgap_scan}).
+
+\fig{spacing_maxgap_scan}{1.0}{Maximum-spacing statistic $T$ against the number of draws per replicate (points: replicates; line: block mean; band: Gumbel 0.1\% to 99.9\%). Good generators stay in the band up to $N=10^9$. LCGs fall below it as $N$ approaches their period (dotted), and grid-limited outputs (RAND, \texttt{REAL*4}) rise above it once $N$ exceeds the number of grid values (dash-dot).}
+
+\subsection{Minimum spacing and birthday collisions}
+The opposite extreme, the minimum spacing and the number of repeated values, is four to five decades of $N$ more sensitive to the output resolution. A source with $G$ equally likely values produces about $N^2/2G$ repeats among $N$ draws, so counting repeats measures an effective resolution $G_{\rm eff}$ (Fig.~\ref{fig:spacing_duplicates}). The measurements recover the true resolutions to 0.02\% to 0.5\%: \texttt{RAND()} gives $G_{\rm eff} = 4.2023\times 10^6 = 2^{31}/511$ (each value covers 512 MINSTD states that never repeat within a period), R250 gives $2^{32}$, and \texttt{REAL*4} storage gives $0.75\times 2^{25}$.
+
+The LCGs fail this test in the opposite direction. Because their full state is the output, they produce \emph{no} repeated value within a period: RANDU gave 0 repeats in 300 samples of $10^6$ draws, where $2.8\times10^5$ are expected for independent draws from $2^{29}$ values. Real random numbers have birthdays; RANDU never does. The logistic map fails both spacing tests already at $N = 10^3$: its tent-map dynamics turns every close pair into a chain of pairs whose distance doubles at each step, which makes $E[n(n+1)m_n] = 2$ exactly instead of 1. In a three-dimensional birthday-spacings test (Marsaglia's version on triplets), RANDU fails with only 256 points.
+
+\fig{spacing_duplicates}{1.0}{Left: number of repeated values $D(N)$ against the birthday prediction for $G$ equally likely values (dashed). RANDU produces no repeat at all before its period $2^{29}$ and exactly $N-2^{29}$ afterwards. Right: effective number of distinct values $G_{\rm eff}$ with 95\% intervals; the permutation generators give only lower bounds, which exceed their true number of states by at least $2^{18}$.}
+
+\subsection{Exact periods and the seed question}\label{sec:periods}
+We measured periods exactly with Brent's cycle-detection algorithm on the full internal state. For RANDU and RANDM all odd seeds, from 3 to 314159 (one to six digits), give the full period $2^{29} = 536{,}870{,}912$. A seed of the form $2^k\times(\text{odd})$ gives
+\begin{equation}
+\lambda = 2^{29-k}
+\end{equation}
+for every $k = 1$ to 24 without exception, and seed 0 is a fixed point (Fig.~\ref{fig:spacing_lcg_period}). The Part 1 seed $65536 = 2^{16}$ therefore has period $2^{13} = 8192$. The answer to the assignment's question is that a five-digit seed is superstition but an odd seed is essential: each factor of 2 in the seed halves the period, because the multiplication preserves the trailing zero bits. MINSTD, with prime modulus, has the full period $2^{31}-2$ for every seed.
+
+\fig{spacing_lcg_period}{0.75}{Exact periods from Brent's algorithm for 56 seeds each of RANDU and RANDM: $\lambda=2^{29-k}$ for seed $2^k\times$odd, independent of the number of digits. The Part 1 seed 65536 has $k=16$ and period 8192.}
+
+The two negative controls have strikingly small state spaces (Fig.~\ref{fig:spacing_maps}). A complete enumeration of all $10^8$ seeds of the 8-digit middle-square method finds only 17 terminal cycles; half of all seeds end at 0, and no seed produces more than $16{,}903$ distinct numbers. The double-precision logistic map is eventually periodic, as every map on a finite set must be: from 1001 random starts we found six attractors, the most common being a cycle of $5{,}638{,}349$ states (66.6\% of starts), and 17.9\% of starts collapse to the fixed point 0, after which the generator outputs 0 forever.
+
+\fig{spacing_maps}{0.9}{Top: complete enumeration of all $10^8$ middle-square seeds: only 17 terminal cycles, half of all seeds end at 0, and no seed yields more than 16,903 distinct numbers. Bottom: 1001 random starts of the double-precision logistic map end in one of six attractors, and 17.9\% collapse to 0.}
+
+\section{A physical test: the two-dimensional Ising model}
+
+Distributional tests can be passed by a generator that still ruins a simulation. The classic demonstration is due to Ferrenberg, Landau and Wong (1992): the R250 shift register, which passed the standard test batteries of its day, gives wrong answers for the 2D Ising model when used with the Wolff cluster algorithm. We reproduced their experiment.
+
+\paragraph{Setup.} The model is an $L\times L$ periodic square lattice at the critical coupling $K_c = \tfrac12\ln(1+\sqrt2)$, with energy per spin $e = -\langle\sum_{\langle ij\rangle}s_is_j\rangle/L^2$ and specific heat $C$. Exact finite-lattice values follow from the solution of Kaufman (1949) and Ferdinand and Fisher (1969). We implemented it in high precision and validated it against brute-force enumeration of small lattices (agreement to 60 digits). For $L = 16$:
+\begin{equation}
+e = 1.4530648528, \qquad C = 1.4987049594.
+\end{equation}
+The Wolff algorithm grows a cluster from a random site, adding each aligned neighbor with probability $p_{\rm add} = 1-e^{-2K_c} = 2-\sqrt2 \approx 0.586$, one random number per bond test. Error bars come from batch means, with the batch length checked against the measured autocorrelation time.
+
+\paragraph{Results.} MT19937 and RANNUM agree with the exact values under both algorithms. With $10^7$ Wolff clusters, R250 gives
+\begin{equation}
+e = 1.455032(119), \qquad C = 1.44654(112),
+\end{equation}
+that is $\Delta e = +1.97\times10^{-3}$ ($+16.5\sigma$) and $\Delta C = -0.052$ ($-46.7\sigma$, a 3.5\% error). The bias does not depend on the seed or the cluster growth order. The same R250 stream drives Metropolis single-spin updates without any detectable bias, $\Delta e = (0.3 \pm 1.9)\times10^{-4}$ (Fig.~\ref{fig:ising_headline}).
+
+\fig{ising_headline}{1.0}{Measured minus exact energy per spin (left, units of $10^{-3}$) and specific heat (right) for the $16\times16$ Ising model at $K_c$, per generator, for Wolff cluster updates (filled circles) and Metropolis sweeps (open squares), with $\pm1\sigma$ error bars. Only R250 under Wolff is far off ($+17\sigma$ in $e$, $-47\sigma$ in $C$), while the same R250 is unbiased under Metropolis. The RANDM Metropolis point is discussed in the text.}
+
+\paragraph{Mechanism.} Because $u_n = u_{n-103}\oplus u_{n-250}$ bitwise, the leading bits multiply. A rejected bond test has $u \ge 0.586 > 1/2$, i.e.\ a leading bit of 1. If the tests 103 and 250 draws earlier were both rejected, the current draw has a leading bit of 0, so $u < 1/2 < p_{\rm add}$ and the bond is accepted with probability exactly 1, instead of 0.586 (Fig.~\ref{fig:ising_mechanism}). This is a large third-order correlation among accept/reject outcomes ($\kappa_3 = 0.071$, about 4200 standard errors), with no pair correlation at all. Cluster growth uses roughly 240 random numbers per cluster on the $16\times16$ lattice, so the draws 103 and 250 steps back usually belong to the same cluster; in a Metropolis typewriter sweep they belong to fixed, distant sites, and the correlation does no harm.
+
+\fig{ising_mechanism}{0.9}{Top: probability that a Wolff bond test is accepted, given the outcomes (R = rejected, A = accepted) of the tests $p$ and $q$ draws earlier. The dashed line is the ideal $p_{\rm add}=2-\sqrt2$. R250 accepts with certainty after two rejections. Bottom: fraction of draws whose partner $\ell$ draws back lies in the same cluster (0.24 at $\ell=250$), and the distribution of draws per cluster.}
+
+\paragraph{A hidden error.} The bias is fixed while the statistical error shrinks as $n^{-1/2}$, so the error is invisible in short runs: the running R250 energy stays within $2\sigma$ of the exact value up to about $10^5$ clusters and becomes unmistakable only after $10^6$ (Fig.~\ref{fig:ising_hidden_error_growth}). Without the exact solution, a short R250 simulation would have been accepted.
+
+\fig{ising_hidden_error_growth}{0.9}{Running estimates of $e$ and $C$ against the number of Wolff clusters for R250 and MT19937. The gray band is the $\pm2\sigma$ range expected for an unbiased run. The R250 energy stays inside the band until about $10^5$ clusters and then settles at a fixed offset.}
+
+\paragraph{Remedies, and two traps.} Some intuitive fixes do not work (Fig.~\ref{fig:ising_remedies}). Using every second or fourth R250 number, or XOR-ing two independently seeded R250 streams, gives exactly the same trinomial recurrence (confirmed with Berlekamp-Massey) and the same bias. Decimating by 3 or 5, or XOR-ing with MT19937, removes it. Adding two R250 streams modulo $2^{32}$ keeps 38\% of the bias, as the reduced $\kappa_3$ predicts, and the additive lagged Fibonacci generator with the same lags reverses its sign ($\Delta C = +0.006$, $+4.5\sigma$). Over two-tap registers of increasing length $q$ the bias decays as $e^{-q/265}$ and vanishes for $q\ge1279$.
+
+\fig{ising_remedies}{0.9}{Wolff bias for R250 variants (dots, $\pm1\sigma$) compared with the prediction that the bias scales with $\kappa_3$ at lags (103, 250) (open diamonds). Decimation by 2 or 4 and XOR of two R250 streams obey the same recurrence and keep the full bias; decimation by 3 or 5, XOR with MT19937 and Ziff's four-tap register are unbiased.}
+
+\paragraph{Other generators.} Wolff updates driven by RANDU, RANDM, MINSTD and \texttt{RAND()} are unbiased at $10^7$ clusters, although RANDU has a measurable three-point correlation at lags (1, 2), 200 times weaker than R250's. With Metropolis, RANDU and RANDM create a different problem: the generator period $2^{29}$ is an exact multiple of the 256 draws per sweep, so after one generator period the Markov chain repeats itself exactly, and naive error bars are too small by a factor 2.2. Using only independent periods, RANDM still shows a Metropolis energy bias of $-5.8\sigma$ with 256 draws per sweep and $+6.1\sigma$ with 257. We have not identified its mechanism and regard it as a tentative result. The negative controls fail badly: the logistic map gives a Metropolis energy 6.4\% too low ($-107\sigma$).
+
+\section{Summary and conclusions}
+
+Table~\ref{tab:summary} collects the decisive anomaly of each generator and the test that exposes it.
+
+\begin{table}[htbp]\centering\small
+\caption{The most decisive anomaly found for each generator.}\label{tab:summary}
+\begin{tabular}{@{}l>{\raggedright}p{6.4cm}>{\raggedright\arraybackslash}p{5.0cm}@{}}
+\toprule
+Generator & Anomaly & Evidence \\
+\midrule
+RANDU & Triplets on 15 planes; wrong 3D integrals; finite period $2^{29}$ & $S_3=0.0095$; $\hat\pi=3.15426$ ($+60\sigma$); Part 1 test $z\approx-4$ \\
+RANDM & Pairs on 6539 lines; lag-one correlation $1/6539$; same period as RANDU & $S_2=0.19$; $r_1=1.53\times10^{-4}$ ($3.5\sigma$) \\
+RAND & Only $2^{22}$ output values & 58\% of $10^7$ bins empty; digits fail at $p=10$ \\
+MINSTD & Pairs on 16807 lines; half-period sampling makes bins too even & $S_2=0.34$; $D=0.535$ at $N=10^9$ \\
+R250 & Exact three-term XOR identity & Wolff Ising $C$ off by $-47\sigma$ \\
+RANNUM & None found & passes every test \\
+MT19937 & None found (linear complexity 19937 is a known property) & passes every test \\
+MIDSQ & Collapses to 0 or short cycles & at most 16,903 values for any seed \\
+LOGISTIC & Output is a bit shift of the previous output; periodic & cycle of $5.6\times10^6$; Metropolis $-107\sigma$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Answers to the Part 1 questions.}
+\begin{enumerate}
+\item \emph{The difference between RANDM and RANDU.} It is small in the code but large in effect: RANDU is good in 2D and catastrophic in 3D, while RANDM is the worst of all tested LCGs in 2D (with a detectable lag-one correlation $r_1 \approx 1/6539$) and far better than RANDU in 3D to 8D. One-dimensional histograms cannot tell them apart, because both visit exactly the same $2^{29}$ states.
+\item \emph{The seed.} The number of digits is irrelevant. Every trailing zero bit of the seed halves the period of RANDU and RANDM, $\lambda = 2^{29-k}$, so the seed must be odd.
+\item \emph{Numerical precision.} Storing numbers in \texttt{REAL*4} adds its own, generator-independent artifacts: histograms become too uneven at $10^6$ bins and beyond, decimal digits are uniform only to about position 12, and the birthday test sees $0.75\times2^{25}$ effective values. Double precision removes these artifacts but not the generators' own flaws. Precision also matters for the \emph{test}: extracting digits with floating-point arithmetic fails for every generator at position 16.
+\end{enumerate}
+
+\paragraph{General lessons.}
+\begin{itemize}
+\item Too regular is as anomalous as too irregular. Short-period generators fail by producing histograms, digit counts and spacings that are too even, a failure that the course program's outlier count cannot detect but a one-sided $\chi^2$ can.
+\item Every anomaly here has a quantitative explanation in terms of the generator's arithmetic: its period, its lattice, its output grid, or a linear recurrence. Each test sees some of these and not others, which is why a battery of different tests is needed.
+\item Passing distributional tests is not enough. R250 passes the histogram, digit and maximum-spacing tests, yet gives a specific heat wrong by 3.5\% in a standard physics simulation, and the error is invisible until $10^6$ cluster updates.
+\item The two modern generators, MT19937 and gfortran's \texttt{RANDOM\_NUMBER} (xoshiro256**), passed every test we applied. For physics simulations they should be preferred over every other generator studied here.
+\end{itemize}
+
+\paragraph{Limitations.} The test families were checked by independent re-implementations of the generators and by validating every test on MT19937 and RANNUM, but the planned second round of adversarial verification was stopped early to stay within the computing budget. A sixth family (a battery of classical tests: runs, gaps, permutations, cell occupancy, and second-level tests) was not completed; only its serial-correlation result is reported. Several smaller effects remain unexplained and should be read as open questions: the RANDM Metropolis bias, a 10\% to 25\% excess of birthday-spacing collisions for R250 in one and two dimensions, and a weak lag-one correlation in bit 49 of the MINSTD double. Heinrich's original note could not be retrieved, so our maximum-spacing test follows the standard theory of spacings rather than his specific prescription.
+
+\begin{thebibliography}{99}\small
+\bibitem{young} P. Young, \emph{Randu: a bad random number generator}, Physics 115/242 course notes (2001).
+\bibitem{marsaglia68} G. Marsaglia, Random numbers fall mainly in the planes, Proc. Natl. Acad. Sci. USA \textbf{61}, 25 (1968).
+\bibitem{knuth} D. E. Knuth, \emph{The Art of Computer Programming, Vol. 2: Seminumerical Algorithms}, 3rd ed. (Addison-Wesley, 1997).
+\bibitem{parkmiller} S. K. Park and K. W. Miller, Random number generators: good ones are hard to find, Commun. ACM \textbf{31}, 1192 (1988).
+\bibitem{ks} S. Kirkpatrick and E. P. Stoll, A very fast shift-register sequence random number generator, J. Comput. Phys. \textbf{40}, 517 (1981).
+\bibitem{mt} M. Matsumoto and T. Nishimura, Mersenne Twister: a 623-dimensionally equidistributed uniform pseudo-random number generator, ACM Trans. Model. Comput. Simul. \textbf{8}, 3 (1998).
+\bibitem{xoshiro} D. Blackman and S. Vigna, Scrambled linear pseudorandom number generators, ACM Trans. Math. Softw. \textbf{47}(4), 36 (2021).
+\bibitem{vonneumann} J. von Neumann, Various techniques used in connection with random digits, Natl. Bur. Stand. Appl. Math. Ser. \textbf{12}, 36 (1951).
+\bibitem{flw} A. M. Ferrenberg, D. P. Landau and Y. J. Wong, Monte Carlo simulations: hidden errors from ``good'' random number generators, Phys. Rev. Lett. \textbf{69}, 3382 (1992).
+\bibitem{wolff} U. Wolff, Collective Monte Carlo updating for spin systems, Phys. Rev. Lett. \textbf{62}, 361 (1989).
+\bibitem{kaufman} B. Kaufman, Crystal statistics. II. Partition function evaluated by spinor analysis, Phys. Rev. \textbf{76}, 1232 (1949).
+\bibitem{ff} A. E. Ferdinand and M. E. Fisher, Bounded and inhomogeneous Ising models. I. Specific-heat anomaly of a finite lattice, Phys. Rev. \textbf{185}, 832 (1969).
+\bibitem{ziff} R. M. Ziff, Four-tap shift-register-sequence random-number generators, Comput. Phys. \textbf{12}, 385 (1998).
+\bibitem{heinrich} J. Heinrich, CDF/MEMO/STATISTICS/PUBLIC/8032, CDF Collaboration note (2006), as cited in the Particle Data Group review of Monte Carlo techniques (not retrieved).
+\bibitem{pdg} S. Navas \emph{et al.} (Particle Data Group), Review of Particle Physics, Phys. Rev. D \textbf{110}, 030001 (2024), Sec.~42.
+\bibitem{pyke} R. Pyke, Spacings, J. R. Stat. Soc. B \textbf{27}, 395 (1965).
+\bibitem{brent} R. P. Brent, An improved Monte Carlo factorization algorithm, BIT \textbf{20}, 176 (1980).
+\bibitem{massey} J. L. Massey, Shift-register synthesis and BCH decoding, IEEE Trans. Inf. Theory \textbf{15}, 122 (1969).
+\bibitem{lll} A. K. Lenstra, H. W. Lenstra Jr. and L. Lov\'asz, Factoring polynomials with rational coefficients, Math. Ann. \textbf{261}, 515 (1982).
+\bibitem{fp} U. Fincke and M. Pohst, Improved methods for calculating vectors of short length in a lattice, Math. Comp. \textbf{44}, 463 (1985).
+\bibitem{grebogi} C. Grebogi, E. Ott and J. A. Yorke, Roundoff-induced periodicity and the correlation dimension of chaotic attractors, Phys. Rev. A \textbf{38}, 3688 (1988).
+\bibitem{testu01} P. L'Ecuyer and R. Simard, TestU01: a C library for empirical testing of random number generators, ACM Trans. Math. Softw. \textbf{33}(4), 22 (2007).
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,26 @@
+RANDM    done in    13.41 s
+RANDU    done in    13.19 s
+MT19937  done in    15.53 s
+RANNUM   done in    14.38 s
+MINSTD   done in    14.78 s
+RAND     done in    16.63 s
+R250     done in    13.32 s
+LOGISTIC done in    17.96 s
+MIDSQ    done in     0.47 s
+RANDM    done in     2.36 s
+RANDU    done in     2.39 s
+RANDM    done in     2.29 s
+RANDU    done in     2.27 s
+RANDM    done in     2.24 s
+RANDU    done in     2.28 s
+MT19937  done in     4.60 s
+MT19937  done in     4.59 s
+R250     c3map done in    27.02 s
+RANDU    c3map done in    26.90 s
+MT19937  c3map done in    27.31 s
+RANDM    c3map done in    27.74 s
+LOGISTIC c3map done in    27.97 s
+MINSTD   c3map done in    27.77 s
+RANNUM   c3map done in    28.06 s
+RAND     c3map done in    27.94 s
+GEMM_DONE

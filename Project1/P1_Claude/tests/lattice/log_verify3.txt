@@ -1,0 +1,4 @@
+MINSTD: local LCG matches rnglib for 1e6 steps
+MINSTD tuples checked:   2147483646  cpu     93.3 s
+  state after P steps equals start: T   state after P/2 steps equals start: F
+wrote verify_MINSTD.txt

@@ -1,0 +1,2 @@
+C_ziff_s2|alg='wolff' src=20 ntap=4 lags=471,1586,6988,9689 seed=24680 nmeas=4000000 nbatch=400
+C_alfg_s2|alg='wolff' src=24 seed=24680 nmeas=4000000 nbatch=400

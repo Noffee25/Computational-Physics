@@ -1,0 +1,2 @@
+# logistic map verified bitwise against rnglib for 1e6 steps
+./period_logis 1000 20261023 logis_survey.txt  325.11s user 2.84s system 64% cpu 8:30.17 total

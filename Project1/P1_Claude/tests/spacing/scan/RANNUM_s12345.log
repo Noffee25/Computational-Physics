@@ -1,0 +1,2 @@
+RANNUM N=10000 R=5000 t=     0.8 s
+RANNUM N=10000000 R=40 t=     6.6 s

@@ -1,0 +1,14 @@
+RANDU    max S(n /= 0) =   9.1316E+00   S(9,-6,1) =    9  -6   1  cpu    0.3 s
+      S(9,-6,1) =   1.000000E+05
+RANDM    max S(n /= 0) =   9.1021E+00   S(9,-6,1) =    9  -6   1  cpu    0.3 s
+      S(9,-6,1) =   1.941520E+00
+MINSTD   max S(n /= 0) =   1.5486E+01   S(9,-6,1) =    9  -6   1  cpu    0.3 s
+      S(9,-6,1) =   2.328419E+00
+MT19937  max S(n /= 0) =   8.8240E+00   S(9,-6,1) =    9  -6   1  cpu    0.3 s
+      S(9,-6,1) =   1.012525E+00
+RANNUM   max S(n /= 0) =   9.3034E+00   S(9,-6,1) =    9  -6   1  cpu    0.3 s
+      S(9,-6,1) =   6.805496E-02
+isotropy method 1: directions with |cos theta| < 1e-12:    276278  fraction  0.138139  uniforms used     11400336
+isotropy method 2: directions with |cos theta| < 1e-12:         0  fraction  0.000000  uniforms used     11460429
+isotropy method 3: directions with |cos theta| < 1e-12:         0  fraction  0.000000  uniforms used      4000000
+isotropy method 4: directions with |cos theta| < 1e-12:         0  fraction  0.000000  uniforms used     11475330

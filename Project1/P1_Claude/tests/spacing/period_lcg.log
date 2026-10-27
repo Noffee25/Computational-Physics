@@ -1,0 +1,4 @@
+# fast map verified against rnglib for RANDU
+# fast map verified against rnglib for RANDM
+# fast map verified against rnglib for MINSTD
+./period_lcg  69.42s user 0.63s system 65% cpu 1:47.44 total

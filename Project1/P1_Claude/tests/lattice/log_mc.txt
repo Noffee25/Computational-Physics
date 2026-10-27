@@ -1,0 +1,7 @@
+done RANDU   
+done RANDM   
+done MINSTD  
+done MINSTD2 
+done LCG69069
+done MT19937 
+done RANNUM  

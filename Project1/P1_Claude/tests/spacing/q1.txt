@@ -1,0 +1,5 @@
+MT 7 777 0 plan_long.txt
+RAND 3 777 0 plan_longer.txt
+RANDU 1 777 0 plan_long.txt
+MIDSQ777 8 777 0 plan_short.txt
+RANDU65536 1 65536 0 plan_short.txt

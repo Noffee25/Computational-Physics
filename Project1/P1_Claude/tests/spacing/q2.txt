@@ -1,0 +1,5 @@
+MTsingle 7 777 1 plan_long.txt
+MINSTD 4 777 0 plan_longer.txt
+RANDM 2 777 0 plan_long.txt
+RANDM65536 2 65536 0 plan_short.txt
+MIDSQ12345678 8 12345678 0 plan_short.txt

@@ -1,0 +1,5 @@
+# method  n_exact_on_great_circle  NDIR
+  1    276278   2000000
+  2         0   2000000
+  3         0   2000000
+  4         0   2000000

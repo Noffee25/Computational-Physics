@@ -1,0 +1,293 @@
+{
+ "family": "hist",
+ "title": "Deep histogram tests: dispersion index, depth scan, and an exact finite-population theory of bin counts",
+ "summary": "I rewrote the course histogram program (rnd_test_claude.f, fixed form, USE RNGLIB) as a general deep-histogram driver. It runs any generator in either precision for any number of bins B and draws N. Instead of a per-bin dump it reports compact summaries: empty bins, the dispersion index D = s^2/mean, the chi-square z-score, 4-sigma outliers against exact binomial expectations, and the count-of-counts table. I scanned depths B = 10^1 to 10^8 (100 hits per bin, 10 at B = 10^8) for all nine generators in double precision, for five generators stored in REAL*4, and for the even seed 65536. The good generators (MT19937, RANNUM, R250 in double) stayed within 2.3 sigma of the ideal at every depth. Every other generator failed at a depth that can be predicted exactly. The prediction comes from one rule: a generator that visits each reachable value once per period P gives, after N = qP + r draws, bin counts $n_b = q c_b + \\mathrm{Hyp}(P, c_b, r)$, where $c_b$ is the measured one-period population of bin b. For floating-point storage, the bin probabilities come from the REAL*4 rounding cells. This rule, together with a rho-shaped model of the logistic map (which I found is periodic in double precision, cycle length 5,638,349), predicts all 112 non-logistic depth-scan values of D within 1.95 sigma. It also explains the student's observations: RANDU's too-even bins at 1e7 bins (D = 0.0710 measured vs 0.0711 predicted), RAND's empty bins and the bump at 238.4 (Binomial(512, 0.4657)), and the REAL*4 steps at 1/2, 1/4, 1/8 (block D = 8.76, 3.03, 1.46 matching the rounding model). Repeating the student's own 1e5-bin, 1e7-draw test over 200 seeds shows that RANDU and RANDM already fail it at about 4 sigma (mean z = -3.94 and -4.21; predicted -4.17) because the chi-square comes out too small. A one-sided reading of the chi-square detects this. The 4-sigma outlier count used by the course program does not.",
+ "methods": [
+  {
+   "name": "Deep-histogram driver (rnd_test_claude.f)",
+   "description": "Each job line (IGEN IPREC NBINS NDRAW ISEED ICOC NREG TAG) seeds one rnglib generator, sets rng_single=(IPREC==4), draws N numbers x and increments bin int(x*B)+1 (clamped to [1,B]). With $\\lambda = N/B$ it reports: NEMPTY; sample variance $s^2=\\sum_b(n_b-\\lambda)^2/(B-1)$; dispersion index $D=s^2/\\lambda$; Pearson $\\chi^2=\\sum_b (n_b-\\lambda)^2/\\lambda=(B-1)D$; and $z=(\\chi^2-(B-1))/\\sqrt{2(B-1)(1-1/N)}$. These are the exact multinomial mean and variance of $\\chi^2$, so under the null $E[D]=1$ and $\\mathrm{sd}(D)=\\sqrt{2(1-1/N)/(B-1)}$. It also reports N4LO/N4HI, the number of bins with $(n_b-\\lambda)/\\sqrt{\\lambda}\\le -4$ or $\\ge 4$ (the course criterion), and their exact expectations $B\\,P(\\mathrm{Bin}(N,1/B)\\ \\text{in tail})$ from log-gamma pmf sums. Optional outputs: the count-of-counts table (number of bins with exactly k hits) and a profile (mean and D in NREG consecutive blocks of bins, to locate an anomaly in x). Bins are integer*4; outputs are appended, one block per job.",
+   "parameters": "CL = 4; count-of-counts tabulated over [min,max] when the range is below 2e6, otherwise 0..2e6 plus an overflow line; compiled with gfortran 16 -O2 against a private copy of rnglib.o"
+  },
+  {
+   "name": "Depth scan",
+   "description": "$B=10^d$ for d=1..7 with N=100B ($\\lambda=100$), and d=8 with N=1e9 ($\\lambda=10$, limited by memory and time). Series: all 9 generators in double precision with seed 777; RANDU, MINSTD, MT19937, R250, RANNUM stored in REAL*4 (rng_single); RANDU and RANDM with seed 65536. Profiles with 1000 blocks for d>=6.",
+   "parameters": "14 series x 8 depths = 112 runs plus 16 seed-65536 runs; 2.1e9 draws per series; about 13 CPU minutes on a heavily loaded machine"
+  },
+  {
+   "name": "Full-period population and finite-population (hypergeometric) theory",
+   "description": "hist_period.f90 bins exactly one period of a generator into B=10^1..10^8 at once, with the driver's arithmetic. This gives $c_b$, the number of reachable outputs in bin b. It also checks the period: the integer state returns to the seed after exactly P steps and never before, and the next 16 outputs repeat the first 16. For N = qP + r draws the counts are modeled as $n_b = q c_b + h_b$ with $h_b \\sim \\mathrm{Hypergeometric}(P, c_b, r)$, i.e. the partial period acts as a random subset. Then $E[\\sum_b (n_b-\\lambda)^2]=\\sum_b [\\mathrm{Var}(h_b)+(c_b N/P-\\lambda)^2]$, giving $E[D]$, and $\\mathrm{sd}(D)$ uses a Gaussian approximation per bin. For $c_b \\ll P$ this reduces to $D \\approx (N/P)D_c + f(1-f)P/N$ with $f=r/P$ and $D_c=\\mathrm{Var}(c_b)/\\bar c$. For N<P that is $D\\approx 1-N/P+(N/P)D_c$, the finite population correction. The empty fraction is $\\sum_b C(P-c_b,r)/C(P,r)/B$ for q=0, or the fraction with $c_b=0$ for q>=1. The predicted count-of-counts is the mixture $\\sum_b P(q c_b+\\mathrm{Bin}(c_b,f)=k)/B$.",
+   "parameters": "RANDU and RANDM, seed 777: P = 2^29 = 536,870,912 (orbit = odd states congruent to 1 or 3 mod 8, the same set for both multipliers); seed 65536: P = 8192; MINSTD: P = 2^31-2; RAND: P = 2^31-2 with 2^22 values carrying 512 states each (the top value 510); REAL*4 versions of RANDU and MINSTD enumerated exactly"
+  },
+  {
+   "name": "REAL*4 rounding-cell model",
+   "description": "float_weights.f90 streams over every REAL*4 value f in [2^-40, 1) in increasing order. Each f gets the weight of its round-to-nearest cell [(f_prev+f)/2, (f+f_next)/2). The top float below 1 also gets [1-2^-25,1), because rnglib maps 1.0 back to it. The weights are summed into the bin containing f, giving exact bin probabilities $p_b$ for a continuous uniform input stored in REAL*4. With $w_b = B p_b$: $E[D]=1+(\\lambda-1/B)\\sum_b (w_b-1)^2/(B-1)$, and the count-of-counts is a Poisson($\\lambda w_b$) mixture. Analytic octave form: in $[2^{-k-1},2^{-k})$ the float spacing is $u=2^{-k-24}$, each bin holds $\\lfloor g\\rfloor$ or $\\lceil g\\rceil$ floats with $g = 1/(Bu)$, and the block dispersion is $1+\\lambda\\,\\mathrm{frac}(g)(1-\\mathrm{frac}(g))/g^2$.",
+   "parameters": "applied to MT19937, RANNUM (53-bit inputs) and R250 (32-bit inputs, approximate) in REAL*4; for the double-precision word lattices k/2^32 (R250) and k/2^53 the analogous lattice weights are used"
+  },
+  {
+   "name": "Logistic-map cycle detection and rho model",
+   "description": "logis_cycle.f90 is a bit-exact replica of G_LOGIS (verified against rng_next for 1e7 draws, 0 mismatches). It applies Brent's algorithm to the double-precision state to find the tail length $\\mu$ and cycle length L. Rho model of the histogram: tail points are visited once and cycle points (N-$\\mu$)/L times, both placed in bins as independent Poisson samples. This gives $D=[\\mu+L f(1-f)+(N-\\mu)^2/L]/N$ with $f=\\mathrm{frac}((N-\\mu)/L)$, an empty fraction $e^{-(\\mu+L)/B}$, and a comb-shaped count-of-counts.",
+   "parameters": "seed 777 plus a survey of 30 random seeds"
+  },
+  {
+   "name": "Student configuration repeated over seeds",
+   "description": "The student's histogram test (B=1e5, N=1e7, double precision) was run for 200 odd seeds drawn from numpy default_rng(777) for RANDU, RANDM, RAND, MINSTD, R250, RANNUM and MT19937. The z distributions were compared with the theory prediction $N(\\mu_z,\\sigma_z)$ (t-test on the mean, KS test).",
+   "parameters": "1400 runs, 1.4e10 draws"
+  },
+  {
+   "name": "Serial-correlation check on the null distribution",
+   "description": "1000 random seeds of LOGISTIC, MT19937 and RANNUM at B=100, N=1e4 (well inside the logistic transient). Statistics: KS test of $\\chi^2$ against $\\chi^2_{99}$, SD of z, fraction with |z|>3. A second run wrote per-bin counts (profile with NREG=B) to estimate the per-bin variance ratio $\\phi_b=\\mathrm{Var}(n_b)/\\lambda$ across seeds.",
+   "parameters": "3000 runs plus 2000 profile runs"
+  },
+  {
+   "name": "RAND identity check",
+   "description": "rand_check.f90 runs G_RAND and G_MINSTD from the same seed side by side for 2e8 draws. It compares RAND with $\\lfloor (s-1)/2^9\\rfloor\\,2^{-22}$ and with $\\lfloor 2^{22}s/(2^{31}-1)\\rfloor\\,2^{-22}$, where s is the MINSTD state, then builds RAND's exact one-period table from the verified identity.",
+   "parameters": "seed 777, 2e8 draws"
+  }
+ ],
+ "findings": [
+  {
+   "id": "H1",
+   "claim": "The deep histogram cleanly separates the generators. MT19937, RANNUM and R250 (double) stay within the null at every depth up to B=1e8. Every other generator fails beyond a characteristic depth, either too even (D<1) or too uneven (D>1).",
+   "evidence": "Validation on good generators (24 runs, B=10 to 1e8): max |z| = 2.31 (R250 at B=1e8). At B=1e7, N=1e9 the 4-sigma outliers were MT 112 low and 892 high, R250 106 and 911, RANNUM 104 and 878, against exact binomial expectations of 108.1 and 916.5. Empty bins at B=1e8 (lambda=10): 4526, 4528, 4550 vs Poisson 4540 +/- 67. Failures at B=1e7, N=1e9: RANDU D=0.0710 (z=-2077), RANDM 0.0710, MINSTD 0.535 (z=-1040), RAND 139 (z=3.1e5), LOGISTIC 172 (z=3.8e5), MIDSQ 1e9. At B=1e8: RANDU 0.190, MINSTD 0.540, RAND 229, LOGISTIC 172.",
+   "generators": [
+    "MT19937",
+    "RANNUM",
+    "R250",
+    "RANDU",
+    "RANDM",
+    "MINSTD",
+    "RAND",
+    "LOGISTIC",
+    "MIDSQ"
+   ],
+   "figure": "hist_depth_scan.png",
+   "category": "validation",
+   "is_anomaly": false
+  },
+  {
+   "id": "H2",
+   "claim": "RANDU and RANDM bins are too even because the generator has run through its whole period. A finite-population (hypergeometric) model built from the exact one-period histogram predicts D at every depth. RANDU and RANDM visit exactly the same 2^29 states (odd states congruent to 1 or 3 mod 8) in different orders, so their predictions coincide.",
+   "evidence": "Period verified as exactly 2^29 for both (state returns after 536,870,912 steps and never before). B=1e7, N=1e9 (q=1, f=0.8626): predicted D=0.071072 +/- 0.000032, measured RANDU 0.071020 (-1.65 sd) and RANDM 0.071045 (-0.86 sd). Bin counts ran from 84 to 108, against Poisson(100) bulk of about 60 to 140. B=1e6, N=1e8: predicted 0.813903 +/- 0.00115, measured 0.813871 and 0.812966. B=1e8, N=1e9: predicted 0.189920 +/- 0.00002, measured 0.189914 and 0.189924. RANDU at B=1e7 had zero 4-sigma outliers where 1024.6 are expected for a perfect generator (Poisson probability about e^-1025).",
+   "generators": [
+    "RANDU",
+    "RANDM"
+   ],
+   "figure": "hist_theory.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "H3",
+   "claim": "MINSTD, with N=1e9 about half its period, shows D close to 1-N/P = 0.534 as predicted. The deficit also appears in the empty-bin count at B=1e8, where sampling without replacement leaves 30 times fewer empty bins than Poisson.",
+   "evidence": "P = 2^31-2 verified. B=1e7, N=1e9: predicted D = 0.534747 +/- 0.000239, measured 0.534823 (+0.32 sd); counts 57 to 138. B=1e6, N=1e8: predicted 0.953439 +/- 0.00135, measured 0.954224 (z_null = -32.4). B=1e8, N=1e9: 146 empty bins against Poisson 4540 +/- 67 (65 sigma) and a model prediction of 149.8 = 1e8(1-f)^{21.47}.",
+   "generators": [
+    "MINSTD"
+   ],
+   "figure": "hist_theory.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "H4",
+   "claim": "RAND's bimodal count-of-counts follows exactly from the identity RAND = floor((s-1)/2^9) 2^-22. Every one of its 2^22 values carries 512 MINSTD states, so at B=1e7 a bin holds 0 or 512 states. That gives a spike at 0 (58.06 percent of bins) and a Binomial(512, N/P) bump near 238.",
+   "evidence": "Identity: 0 mismatches in 2e8 draws (the alternative floor(2^22 s/M) 2^-22 mismatched 390,584 times). B=1e7, N=1e9: empty bins = 5,805,696 = 1e7 - 2^22 exactly. Filled-bin mean 238.42 and SD 11.284, against Binomial(512, 0.465661) mean 238.42 and SD 11.287. Predicted D 138.953 +/- 0.006, measured 138.953. B=1e8: 95,805,696 empty bins = 1e8 - 2^22, D 228.953 (predicted 228.953). B=1e6: D=1.846 vs 1.843 +/- 0.0024, first failing at z=598. At the student's B=1e5 the prediction is only -0.36 sigma, so RAND passes there.",
+   "generators": [
+    "RAND"
+   ],
+   "figure": "hist_count_of_counts.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "H5",
+   "claim": "The student's own 1e5-bin, 1e7-draw test already detects RANDU's and RANDM's finite period at about 4 sigma in almost every run. The chi-square is too small, and the 4-sigma outlier count is blind to this. In general a period-P generator fails the lambda=100 histogram test at 3 sigma once $N \\gtrsim 12 P^{2/3}$, because $z \\approx -(N/P)\\sqrt{(B-1)/2}$.",
+   "evidence": "Predicted z = -4.17 (D = 0.98137 +/- 0.00439). Over 200 odd seeds: RANDU mean z = -3.94 (sd 1.22) and RANDM -4.21 (sd 0.86). z < -3 in 74 percent and 91 percent of runs, z < -1.96 in 93.5 and 99 percent; the highest RANDU z was -1.18. Seed 777: z = -4.41. Null controls: R250 +0.04 (KS p=0.57), RANNUM +0.08 (p=0.39), MT19937 -0.03 (p=0.81). MINSTD -0.83 (predicted -1.04), RAND -0.15 (predicted -0.36). The scaling law gives N* about 8e6 for RANDU (B about 8e4) and 2e7 for MINSTD (B about 2e5), consistent with failures first appearing at d=5 and d=6.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD",
+    "RAND",
+    "MT19937",
+    "RANNUM",
+    "R250"
+   ],
+   "figure": "hist_seed_study.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "H6",
+   "claim": "The even seed 65536 reduces RANDU and RANDM to the same 8192 values (u/2^15 with u congruent to 1 or 3 mod 8). D swings from far too even at shallow depth to enormously too uneven, and the histogram becomes deterministic. Prime-modulus MINSTD has no such seed sensitivity.",
+   "evidence": "P = 8192 verified for both. Measured D vs prediction: B=100: 0.137 vs 0.142 +/- 0.020; B=1e3: 0.241 vs 0.245; B=1e4: 69.761 vs 69.762, with 3408 of 1e4 bins empty (exactly predicted); B=1e5: 1120.71; B=1e7: 121,970 with 9,991,808 empty bins and every filled bin holding 122,070 or 122,071 hits (q=122,070, f=0.3125), as the student found.",
+   "generators": [
+    "RANDU",
+    "RANDM"
+   ],
+   "figure": "hist_theory.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "H7",
+   "claim": "Storing any generator in REAL*4 makes the histogram too uneven at B >= 1e6. This is a floating-point artifact that depends only on the octave of x. An exact rounding-cell model reproduces D at every depth and the steps the student saw at 1/2, 1/4, 1/8.",
+   "evidence": "Model D for continuous input at lambda=100: 1.00037 (B=1e5, invisible: 0.08 sigma), 1.0366 (B=1e6), 5.4548 (B=1e7), 31.454 (B=1e8, lambda=10). MT19937 REAL*4 measured 1.0373 (z_null=26.4), 5.4535 (-0.99 sd), 31.456; RANNUM 1.0345, 5.4543, 31.457; R250 1.0378, 5.4546, 31.455. Block D at B=1e7 matches $1+\\lambda\\,\\mathrm{frac}(g)(1-\\mathrm{frac}(g))/g^2$: model 8.760/3.035/1.456/1.135 vs MT 8.760/3.033/1.455/1.137 in [1/2,1), [1/4,1/2), [1/8,1/4), [1/16,1/8). At B=1e8, 62,334,176 bins (62.33 percent) contain no REAL*4 value at all; every REAL*4 series showed 62.33 to 62.34 percent empty bins. RANDU and MINSTD in REAL*4 combine both effects: D = 4.5185 (pred 4.5185 +/- 0.0003) and 4.9884 (pred 4.9891 +/- 0.0009), i.e. the MT value minus their period deficits of 0.93 and 0.47.",
+   "generators": [
+    "RANDU",
+    "MINSTD",
+    "MT19937",
+    "RANNUM",
+    "R250"
+   ],
+   "figure": "hist_single_precision.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "H8",
+   "claim": "The double-precision logistic map (the chaotic negative control) is secretly periodic. From seed 777 it enters a cycle of 5,638,349 states after 14,324,259 steps, and a rho-shaped model predicts its histogram (D, empty fraction, comb-shaped count-of-counts) at every depth.",
+   "evidence": "Brent cycle detection on a bit-exact replica. Model vs measured: D at N=1e8 (B=1e6) 13.171 +/- 0.019 vs 13.166; N=1e9 (B=1e7) 172.327 +/- 0.106 vs 172.363; B=1e8 172.327 vs 172.343. Empty fraction at B=1e7: 0.135842 vs 0.135798; at B=1e8: 0.819037 vs 0.818994. The count-of-counts at B=1e7 forms a comb at multiples of 174 to 175 cycle visits. Survey of 30 random seeds: 21 enter the same 5,638,349 cycle, 6 collapse to the fixed point 0 (through 1/2 -> 1 -> 0 in rounding), and 3 enter cycles of 14,632,801, 2,625,633 and 2,441,806 states; tails range from 1.37e6 to 8.0e7.",
+   "generators": [
+    "LOGISTIC"
+   ],
+   "figure": "hist_count_of_counts.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "H9",
+   "claim": "Test property: for a serially correlated sequence with an exactly uniform marginal (the tent-map conjugate of the logistic map), D keeps mean 1, but its sampling distribution is much wider than the chi-square null. So isolated 4-sigma excursions at shallow depth are expected and do not by themselves indicate a bad marginal.",
+   "evidence": "LOGISTIC at B=100, N=1e4, 1000 seeds: mean D = 0.988, SD 0.243 vs null 0.142 (variance ratio 2.93), |z|>3 in 6.2 percent of runs vs 0.27 percent, KS against chi2(99) p = 6e-28. MT19937: SD 0.139, KS p = 0.19. RANNUM: SD 0.144, p = 0.69. Per-bin variance ratio is highest in the bins holding the tent-map fixed points: phi = 2.75 for [0,0.01) and 2.59 for [0.66,0.67) (x=2/3), mean phi = 0.978. The seed-777 depth-scan value at B=100 (D=1.618, z=4.35) is the only one of 120 points outside 2 sigma of its prediction; against the empirical LOGISTIC spread it is 2.6 sd.",
+   "generators": [
+    "LOGISTIC",
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "hist_seed_study.png",
+   "category": "test_property",
+   "is_anomaly": false
+  },
+  {
+   "id": "H10",
+   "claim": "Overall validation: the finite-population and rounding theory, with no free parameters, reproduces all measured dispersion indices. That makes the histogram test quantitatively understood: every deviation is either period exhaustion, a missing-values lattice, or REAL*4 rounding.",
+   "evidence": "112 non-logistic depth-scan points: max |measured - predicted|/sd = 1.95, rms 0.84 (several series share sequences, so the points are not independent). Including LOGISTIC, 119 of 120 points are within 2 sd; the exception is H9.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "RAND",
+    "MINSTD",
+    "R250",
+    "RANNUM",
+    "MT19937",
+    "LOGISTIC"
+   ],
+   "figure": "hist_residuals.png",
+   "category": "validation",
+   "is_anomaly": false
+  },
+  {
+   "id": "H11",
+   "claim": "Control: MIDSQ with the default seed 777 is a constant generator. It reaches the absorbing state 0 at the second draw, so the histogram puts all draws but one into the first bin and D = N exactly.",
+   "evidence": "777^2/10^4 = 60, then 60^2/10^4 = 0. At B=1e7, N=1e9: 9,999,998 empty bins, one bin with 999,999,999 hits, D = 1.0e9. D = N at every depth (1000 at B=10).",
+   "generators": [
+    "MIDSQ"
+   ],
+   "figure": "hist_depth_scan.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  }
+ ],
+ "figures": [
+  {
+   "file": "hist_depth_scan.png",
+   "caption": "Depth scan with 100 expected hits per bin ($\\lambda=10$ at $B=10^8$), seed 777, double precision. Left: dispersion index D. Middle: chi-square z-score (symmetric log axis). Right: fraction of empty bins. The gray bands are the ideal $\\pm3\\sigma$ ranges. MT19937, RANNUM and R250 stay at D = 1 at every depth. RANDU and RANDM (identical curves) and MINSTD drop below 1 once the draws approach their periods, while RAND, LOGISTIC and MIDSQ blow up."
+  },
+  {
+   "file": "hist_count_of_counts.png",
+   "caption": "Count-of-counts (fraction of bins receiving exactly k hits) at $B=10^7$, $N=10^9$ for all nine generators, against the ideal Poisson(100) (dashed) and the finite-period model (solid). RANDU and RANDM are far narrower than Poisson, MINSTD is a Binomial with half the Poisson variance, and RAND splits into a spike of empty bins (58 percent) and a Binomial(512, 0.466) bump at 238. LOGISTIC forms a comb at multiples of its 174.8 cycle visits."
+  },
+  {
+   "file": "hist_theory.png",
+   "caption": "Measured D (markers) against the parameter-free prediction (dashed) from the exact one-period histogram, the REAL*4 rounding cells, or the logistic rho model, for every depth-scan series. The prediction follows every turn, including the seed-65536 swing from D = 0.14 to $1.2\\times10^5$ and the REAL*4 rise to D = 31 at $B=10^8$."
+  },
+  {
+   "file": "hist_residuals.png",
+   "caption": "Residuals (measured minus predicted D, in units of the predicted standard deviation) for all 120 depth-scan points. Open circles mark nearly deterministic histograms. Everything lies within $\\pm2\\sigma$ except LOGISTIC at $B=100$, which reflects the serial-correlation widening of the null shown in the seed study."
+  },
+  {
+   "file": "hist_single_precision.png",
+   "caption": "Top: dispersion index inside blocks of $10^4$ consecutive bins at $B=10^7$, $N=10^9$, for numbers stored in REAL*4. Steps occur at every power of two, as the rounding model (dashed) predicts, with MINSTD and RANDU shifted down by their period deficits. Bottom: the resulting multimodal count-of-counts, each matched by its model; the peaks correspond to bins holding 1, 2, 3 or 4 representable floats."
+  },
+  {
+   "file": "hist_seed_study.png",
+   "caption": "Left: chi-square z of the student's test ($B=10^5$, $N=10^7$) for 200 seeds per generator. RANDU and RANDM sit near the predicted $z=-4.17$ (solid tick) in almost every run; MINSTD and RAND are shifted slightly negative; the long-period generators scatter around 0. Right: at $B=100$, $N=10^4$ the logistic map's z distribution (1000 seeds) is 1.7 times wider than N(0,1), although its mean D is 0.99."
+  }
+ ],
+ "tables": [
+  {
+   "title": "Dispersion index D versus depth (seed 777, double precision; lambda = 100, except lambda = 10 at B = 1e8)",
+   "markdown": "| generator | 10^1 | 10^2 | 10^3 | 10^4 | 10^5 | 10^6 | 10^7 | 10^8 |\n|---|---|---|---|---|---|---|---|---|\n| RANDU | 1.249 | 0.801 | 0.984 | 1.012 | 0.980 | 0.814 | 0.0710 | 0.190 |\n| RANDM | 1.667 | 0.906 | 1.031 | 0.999 | 0.989 | 0.813 | 0.0710 | 0.190 |\n| RAND | 0.818 | 0.724 | 0.971 | 0.993 | 1.006 | 1.846 | 139.0 | 229.0 |\n| MINSTD | 0.818 | 0.726 | 0.970 | 0.992 | 1.003 | 0.954 | 0.535 | 0.540 |\n| R250 | 1.091 | 0.967 | 1.022 | 1.016 | 0.993 | 1.001 | 1.000 | 1.000 |\n| RANNUM | 1.091 | 0.987 | 0.996 | 0.997 | 0.997 | 0.999 | 1.000 | 1.000 |\n| MT19937 | 1.789 | 0.887 | 0.943 | 0.997 | 1.005 | 1.001 | 1.000 | 1.000 |\n| MIDSQ | 1e3 | 1e4 | 1e5 | 1e6 | 1e7 | 1e8 | 1e9 | 1e9 |\n| LOGISTIC | 0.869 | 1.618 | 0.937 | 0.992 | 0.995 | 13.17 | 172.4 | 172.3 |\n| null sd of D | 0.471 | 0.142 | 0.045 | 0.014 | 0.0045 | 0.0014 | 0.00045 | 0.00014 |"
+  },
+  {
+   "title": "Measured versus predicted D at the deepest levels (prediction +/- sd)",
+   "markdown": "| series | B | N | measured D | predicted D | resid (sd) | empty (meas / pred) |\n|---|---|---|---|---|---|---|\n| RANDU | 1e7 | 1e9 | 0.071020 | 0.071072 +/- 0.000032 | -1.65 | 0 / 0 |\n| RANDU | 1e8 | 1e9 | 0.189914 | 0.189920 +/- 0.000020 | -0.28 | 0 / 0 |\n| MINSTD | 1e7 | 1e9 | 0.534823 | 0.534747 +/- 0.000239 | +0.32 | 0 / 0 |\n| MINSTD | 1e8 | 1e9 | 0.539652 | 0.539746 +/- 0.000076 | -1.23 | 146 / 149.8 |\n| RAND | 1e7 | 1e9 | 138.953 | 138.953 +/- 0.006 | -0.04 | 5,805,696 / 5,805,696 |\n| RANDU seed 65536 | 1e4 | 1e6 | 69.7606 | 69.7615 +/- 0.0042 | -0.23 | 3408 / 3408 |\n| LOGISTIC | 1e7 | 1e9 | 172.363 | 172.327 +/- 0.106 | +0.33 | 1,357,983 / 1,358,420 |\n| MT19937 REAL*4 | 1e7 | 1e9 | 5.45346 | 5.45475 +/- 0.00130 | -0.99 | 0 / 0 |\n| RANDU REAL*4 | 1e7 | 1e9 | 4.51845 | 4.51847 +/- 0.00031 | -0.06 | 0 / 0 |\n| MINSTD REAL*4 | 1e8 | 1e9 | 30.9878 | 30.9888 +/- 0.0017 | -0.55 | 62,334,406 / 62,334,4xx |"
+  },
+  {
+   "title": "Student configuration (B = 1e5, N = 1e7) over 200 seeds",
+   "markdown": "| generator | mean z | sd z | predicted mean z | frac z < -1.96 | frac z < -3 |\n|---|---|---|---|---|---|\n| RANDU | -3.94 | 1.22 | -4.17 | 0.935 | 0.74 |\n| RANDM | -4.21 | 0.86 | -4.17 | 0.990 | 0.91 |\n| RAND | -0.15 | 0.98 | -0.36 | 0.035 | 0 |\n| MINSTD | -0.83 | 0.99 | -1.04 | 0.135 | 0.015 |\n| R250 | +0.04 | 0.95 | 0.00 | 0.005 | 0 |\n| RANNUM | +0.08 | 0.93 | 0.00 | 0.020 | 0 |\n| MT19937 | -0.03 | 1.02 | 0.00 | 0.025 | 0 |"
+  },
+  {
+   "title": "Fate of the double-precision logistic map (30 random seeds plus seed 777)",
+   "markdown": "| final state | seeds | tail length range |\n|---|---|---|\n| cycle of 5,638,349 states | 21 of 30 (and seeds 1, 2, 3, 777) | 4.3e6 to 8.0e7 |\n| fixed point 0 | 6 of 30 (and seed 12345) | 1.4e6 to 1.9e7 |\n| cycle of 14,632,801 | 1 | 1.1e7 |\n| cycle of 2,625,633 | 1 | 1.7e6 |\n| cycle of 2,441,806 | 1 | 8.2e6 |"
+  }
+ ],
+ "code_files": [
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/rnd_test_claude.f",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/hist_period.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/float_weights.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/logis_cycle.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/rand_check.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/hist_common.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/fig_depth.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/fig_theory.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/fig_resid.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/fig_coc.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/fig_single.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/fig_seeds.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/depth_A.in",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/seeds_e5.in",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/hist/theory_residuals.csv"
+ ],
+ "caveats": [
+  "The 200-seed runs are not independent for the short-period generators. 200 x 1e7 draws cover the RANDU orbits about 1.86 times each and the MINSTD cycle 0.93 times, so the segments overlap. The naive t-test and KS p-values for RANDU, RANDM, MINSTD and RAND therefore overstate significance. The offset between observed and predicted mean z (MINSTD -0.83 vs -1.04, naive p = 0.003; RANDU sd 1.22 vs 0.98, KS p = 7e-5) is not resolved. Single-seed depth-scan residuals for these generators are all within 1.7 sd.",
+  "The hypergeometric model assumes the partial period behaves like a random subset of the population. I confirmed this only empirically at the tested depths; there is no proof for LCG segments.",
+  "The predicted sd of D uses a per-bin Gaussian approximation and ignores the weak inter-bin correlation from the fixed total. Residuals are quoted in those units.",
+  "At B = 1e8 only lambda = 10 (N = 1e9) was affordable, not lambda = 100.",
+  "The RAND one-period table was built from the identity RAND = floor((s-1)/2^9) 2^-22, verified on 2e8 draws (0 mismatches) but not over the full 2^31-2 period. The full-period RAND run was cancelled to stay within the compute budget; RANDU, RANDM, MINSTD and their REAL*4 versions were enumerated over their full verified periods.",
+  "REAL*4 R250 uses the continuous rounding model, which is only approximate for its 2^32-point input lattice. Agreement is still within 1 sd at all depths.",
+  "The LOGISTIC rho model treats tail and cycle points as independent Poisson placements. The inflated shallow-depth variance from serial correlation (finding H9) is measured, not modeled.",
+  "Planned but not run: a fixed-N, increasing-B sensitivity scan. It is covered analytically by $z \\approx -(N/P)\\sqrt{(B-1)/2}$ and the $N^* \\approx 12P^{2/3}$ rule, which match the observed failure depths but were not tested directly.",
+  "MIDSQ was run only with seed 777, which collapses immediately. No proper 8-digit seed was tested.",
+  "Total compute was about 25 CPU minutes on a machine with load averages of 25 to 66, so the wall-clock timings in the summary files are inflated."
+ ],
+ "rnglib_issues": [
+  "No coding bug found in rnglib.f90.",
+  "Refinement of the documented RAND fact: gfortran RAND() after srand(s) equals floor((x_MINSTD_state - 1)/2^9) * 2^-22 exactly (0 mismatches in 2e8 draws from seed 777). The description 'MINSTD truncated down to a multiple of 2^-22', i.e. floor(2^22 s/(2^31-1)) * 2^-22, is wrong in 390,584 of 2e8 draws (0.195 percent). Consequence: per MINSTD period each of the 2^22 RAND values is produced exactly 512 times, and the top value 1-2^-22 only 510 times.",
+  "G_MIDSQ with the project default seed 777 (not an 8-digit seed) reaches the absorbing state 0 on the second draw (777^2/10^4 = 60, 60^2/10^4 = 0), so every MIDSQ test at seed 777 tests a constant. An 8-digit seed is needed for MIDSQ to be a meaningful negative control.",
+  "G_LOGIS in double precision is eventually periodic. Seed 777: tail 14,324,259 steps, then a cycle of 5,638,349 states (bit-exact replica verified against rng_next). 6 of 30 random seeds fall into the fixed point 0 within 1.4e6 to 1.9e7 steps, after which LOGISTIC outputs 0 forever. This is not an implementation bug, but it gives LOGISTIC an effective period of about 1e7.",
+  "Minor: with rng_single = .true., the largest REAL*4 below 1 also absorbs inputs in [1-2^-25, 1) (values that round to 1.0 are mapped back), so it carries 1.5 times the weight of its neighbours. Negligible for histograms (one bin at B >= 1e7)."
+ ],
+ "references": [
+  "D. E. Knuth, The Art of Computer Programming, Vol. 2: Seminumerical Algorithms, 3rd ed. (Addison-Wesley, Reading MA, 1997), Sec. 3.3.1 (chi-square test) and 3.3.2 (collision test).",
+  "S. K. Park and K. W. Miller, Random number generators: good ones are hard to find, Communications of the ACM 31(10), 1192-1201 (1988).",
+  "G. Marsaglia, Random numbers fall mainly in the planes, Proceedings of the National Academy of Sciences 61(1), 25-28 (1968).",
+  "S. Kirkpatrick and E. P. Stoll, A very fast shift-register sequence random number generator, Journal of Computational Physics 40(2), 517-526 (1981).",
+  "M. Matsumoto and T. Nishimura, Mersenne Twister: a 623-dimensionally equidistributed uniform pseudo-random number generator, ACM Transactions on Modeling and Computer Simulation 8(1), 3-30 (1998).",
+  "D. Blackman and S. Vigna, Scrambled linear pseudorandom number generators, ACM Transactions on Mathematical Software 47(4), Article 36 (2021).",
+  "P. L'Ecuyer and R. Simard, TestU01: A C library for empirical testing of random number generators, ACM Transactions on Mathematical Software 33(4), Article 22 (2007).",
+  "W. G. Cochran, Sampling Techniques, 3rd ed. (Wiley, New York, 1977), finite population correction for sampling without replacement.",
+  "R. P. Brent, An improved Monte Carlo factorization algorithm, BIT Numerical Mathematics 20, 176-184 (1980) (cycle detection).",
+  "C. Grebogi, E. Ott, and J. A. Yorke, Roundoff-induced periodicity and the correlation dimension of chaotic attractors, Physical Review A 38(7), 3688-3692 (1988).",
+  "K. J. Persohn and R. J. Povinelli, Analyzing logistic map pseudorandom number generators for periodicity induced by finite precision floating-point representation, Chaos, Solitons and Fractals 45(3), 238-245 (2012).",
+  "J. von Neumann, Various techniques used in connection with random digits, National Bureau of Standards Applied Mathematics Series 12, 36-38 (1951)."
+ ]
+}

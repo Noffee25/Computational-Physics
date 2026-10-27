@@ -1,0 +1,410 @@
+{
+ "family": "digits",
+ "title": "Deep decimal digits and bit-level structure: where each generator stops being random, and the hidden identities in its bits",
+ "summary": "I computed the exact decimal digits $d_p$, $p=1$ to $60$, of $10^8$ outputs per generator, using integer arithmetic on the exact dyadic value $m/2^B$. I compared them with the generators' intended rational values and with the naive $\\mathrm{mod}(\\lfloor x\\,10^p\\rfloor,10)$, in both double and REAL*4. An exact resolution model, the noncentrality $\\lambda_p$ of the digit chi-square, predicts every observed breaking depth. A uniform $B$-bit source first fails at $p\\approx B-11$ for $N=10^8$, so RAND fails at 10, R250 at 21, MT19937 and RANNUM at 42, and any REAL*4 value at 13. That is far deeper than the naive estimate $B\\log_{10}2$. The exact rational digits of MINSTD never fail, while naive extraction fails for every generator at $p=16$ in double and $p=8$ in REAL*4, a pure arithmetic artifact. RANDU and RANDM have decimal digits that are exactly periodic with period $2^{30-p}$, which makes the chi-square too small (left-tail $p$ down to $10^{-11}$) at $p=5$ to $14$ and then too large from $p=17$, in four-figure agreement with theory. At the bit level I derived and verified the exact periods $2^{30-j}$ and lag-1 correlations of the LCG bits; RANDU bits 16 to 27 have $r\\approx 1/3$ because $65539\\equiv 3 \\pmod{2^{16}}$. Berlekamp-Massey gives linear complexities of exactly 250 (R250), 19937 (MT19937) and $2^{29-j}+1$ (RANDU bit $j$). Three-term XOR tests show that R250 obeys its recurrence in all 32 bits with zero violations, that a blind scan of 179,700 lag pairs rediscovers exactly its lags (103, 250) and (206, 500), that the logistic map's output is a one-bit shift of the previous output in its top 26 bits with zero violations, and that MINSTD doubles copy bits 1 to 22 into bits 32 to 53. Along the way I found that the logistic map from seed 777 enters a 5,638,349-step cycle, and that gfortran RAND is exactly $\\lfloor (k-1)/2^9\\rfloor/2^{22}$, which corrects the stated rule in 1/512 of draws.",
+ "methods": [
+  {
+   "name": "Exact decimal digit extraction (stored value)",
+   "description": "Every double $x\\in[0,1)$ is an exact dyadic rational. The program writes $x=m\\,2^{-B}$ with $m$ odd: $m$ = int(scale(fraction(x),53)) with trailing zero bits removed, and $B=53-\\mathrm{exponent}(x)-t$. The digits come from the exact recurrence $r_0=m$, $r\\leftarrow 10r$, $d_p=\\lfloor r/2^B\\rfloor$, $r\\leftarrow r \\bmod 2^B$, in integer(8) for $B\\le 59$ and integer(16) otherwise. It was validated against Python big-integer and Fraction arithmetic on $10^5$ draws of MT19937, RANDU and MINSTD at $p\\in\\{1,5,10,15,16,20,30,45,52,53,54\\}$: all counts are identical. A useful lemma follows from the construction: for $x=k/2^B$, the digit $d_p$ depends only on $k \\bmod 2^{B+1-p}$, because adding $2^{B+1-p}$ to $k$ adds $2\\cdot5^p\\equiv 0 \\pmod{10}$ to $x\\,10^p$.",
+   "parameters": "N = 1e8 draws per generator, p = 1..60, seed 777 (MIDSQ 12345678, LOGISTIC also N = 1e7); double (rng_single=.false.) and REAL*4 (rng_single=.true.) runs"
+  },
+  {
+   "name": "Intended (rational) digits",
+   "description": "For MINSTD the intended value is $k/(2^{31}-1)$, with $k$ taken from rng_state_int; digits come from $r\\leftarrow10r$, $d=\\lfloor r/M\\rfloor$, $r\\leftarrow r-dM$. For MIDSQ the intended value is $k/10^8$. For every other generator the stored double is exactly the intended value. The program also records the mismatch rate between stored and intended digits.",
+   "parameters": "same runs as above, p = 1..60"
+  },
+  {
+   "name": "Naive floating-point digit extraction",
+   "description": "$d_p=\\mathrm{mod}(\\mathrm{int}(x\\cdot10^p),10)$, the way a student would code it. In double, $10^p$ is exact and the product is rounded to 53 bits ($p\\le18$). In REAL*4 the product $x_4\\cdot 10^p$ is formed in single precision ($p\\le12$). The mismatch rate against the exact digit is recorded at each $p$.",
+   "parameters": "double p = 1..18, REAL*4 p = 1..12, N = 1e8"
+  },
+  {
+   "name": "Digit-frequency chi-square with signed two-tailed significance",
+   "description": "$\\chi^2_p=\\sum_{d=0}^{9}(n_d-N/10)^2/(N/10)$, compared with $\\chi^2_9$. The signed significance is $S=+\\log_{10}(1/p_{\\rm right})$ when $p_{\\rm right}<p_{\\rm left}$ and $S=-\\log_{10}(1/p_{\\rm left})$ otherwise, so both non-uniform ($S>0$) and too-uniform ($S<0$) counts are flagged. A cell is anomalous when $|S|>4$ ($p<10^{-4}$, about 0.15 expected false alarms over all cells). The first failing position is the smallest $p$ with $S>4$.",
+   "parameters": "9 dof; upper critical value 33.72, lower 0.661 at 1e-4"
+  },
+  {
+   "name": "Exact resolution model for the digit test",
+   "description": "Let $\\pi_d(p)$ be the exact digit distribution implied by the output lattice. Then $\\chi^2_p$ follows a noncentral $\\chi^2_9(\\lambda_p)$ with $\\lambda_p=10N\\sum_d(\\pi_d-0.1)^2$ and mean $9+\\lambda_p$. Three cases were computed exactly. (i) Uniform $B$-bit source $k/2^B$: $\\pi_d=c_d/2^{B+1-p}$ with $c_d=\\lceil (d+1)2^{B-p}/5\\rceil-\\lceil d\\,2^{B-p}/5\\rceil$, so $\\lambda_p$ depends only on $B-p$ and grows by about $4\\times$ per position. (ii) RANDU and RANDM: enumerate the full residue orbit $\\{r \\bmod 2^{32-p}: r\\equiv1,3 \\pmod 8\\}$. When the digit period $2^{30-p}\\ll N$ the statistic is deterministic and $\\chi^2_p\\approx\\lambda_p$. (iii) REAL*4: enumerate all floats $m/2^{24+k}$, $m\\in[2^{23},2^{24})$, binades $k=0..33$, weighted $2^{-(k+1)}$. The predicted break is where the power $P(\\chi^2_9(\\lambda)>33.72)$ approaches 1.",
+   "parameters": "N = 1e8; B = 22, 24, 31, 32, 53; p = 1..60"
+  },
+  {
+   "name": "Per-bit frequency and lagged autocorrelation",
+   "description": "The bits $b_j=\\lfloor x2^j\\rfloor \\bmod 2$, $j=1..53$, are read exactly from $m=x\\cdot2^{53}$ (bit $j$ is integer bit $53-j$). Frequency test: $z=(n_1-N/2)/\\sqrt{N/4}$. Lagged correlation at $L=1,2,4$: $r=(\\overline{b_nb_{n-L}}-f^2)/(f(1-f))$ with $z=r\\sqrt N$. Bits that never change are reported as constant (dead or stuck) rather than tested.",
+   "parameters": "N = 5e7 per generator, double and REAL*4; MINSTD rechecked with N = 2e8 for seeds 777 and 4242"
+  },
+  {
+   "name": "Exact bit and digit periods of RANDU and RANDM",
+   "description": "Derivation: with $a\\equiv3 \\pmod 8$ and odd seed, the order of $a$ modulo $2^m$ is $2^{m-2}$ and $a^{2^{m-3}}\\equiv1+2^{m-1}$. So $x_{n+P/2}\\equiv x_n+2^{m-1} \\pmod{2^m}$: bit $m-1$ flips at half period, which fixes its period at exactly $2^{m-2}$. For $x=k/2^{31}$, bit $j$ is state bit $31-j$, giving period $2^{30-j}$ for $j\\le28$, with bit 29 constant, bit 30 of period 2 and bit 31 constant. The digit $d_p$ depends only on $k \\bmod 2^{32-p}$, so its period is $2^{30-p}$, and at half period it obeys $d_p(n+2^{29-p})\\equiv d_p(n)+5 \\pmod{10}$. Verification: (a) first return times of $x_n \\bmod 2^i$ over the full orbit ($2^{29}$ steps) plus a flip check at half period; (b) brute-force minimal period of each bit $i=0..22$ and each digit $p=8..30$ on $2^{23}$ consecutive states; (c) the half-period digit identity counted over all $n$.",
+   "parameters": "seed 777; full orbit 536,870,912 steps; 8,388,608 stored states; MINSTD as control"
+  },
+  {
+   "name": "Full-period theory of bit autocorrelation",
+   "description": "The lag-1 correlation of output bit $j$ for RANDU and RANDM is computed exactly by enumerating the residue orbit modulo $2^{32-j}$ ($r\\equiv1,3 \\pmod 8$) and correlating the top bit of $r$ with the top bit of $a\\,r \\bmod 2^{32-j}$. For large moduli this tends to about $1/a'$, where $a'$ is the multiplier's small representative (the square-wave Fourier argument gives $1/a$ for integer $a$).",
+   "parameters": "j = 5..30, both multipliers"
+  },
+  {
+   "name": "Three-term XOR identity tests",
+   "description": "For every bit position $j$ the program counts the $n$ that violate (i) the R250 recurrence $b_j(n)\\oplus b_j(n-103)\\oplus b_j(n-250)=0$; (ii) the tent-map shift identity $b_j(n)\\oplus b_{j+1}(n-1)\\oplus b_1(n-1)=0$, which follows from $\\theta_{n+1}=1-|1-2\\theta_n|$, the exact conjugate of $4s(1-s)$ under $\\theta=(2/\\pi)\\arcsin\\sqrt s$; (iii) the MINSTD copy identity $b_{j+31}=b_j$, which follows from the binary expansion of $k/(2^{31}-1)$ having period 31. All generators are tested, so each identity has 8 controls whose expected violation rate is 1/2.",
+   "parameters": "N = 5e7, double and REAL*4"
+  },
+  {
+   "name": "Blind lag-pair XOR scan",
+   "description": "With 32-bit words $w(n)=\\lfloor x2^{32}\\rfloor$, compute $F(s,t)=\\sum_n\\mathrm{popcount}(w(n)\\oplus w(n-s)\\oplus w(n-t))$ for every $1\\le s<t\\le600$. Bits that are constant over the sample are masked, and the null is $F\\sim\\mathrm{Bin}(n_bL,1/2)$, giving $z=(F-n_bL/2)/\\sqrt{n_bL/4}$. Pairs with $|z|>5$ are listed, and the spread of all 179,700 $z$ values is compared with $N(0,1)$.",
+   "parameters": "T = 600, L = 20,000 words, 179,700 pairs per generator"
+  },
+  {
+   "name": "Berlekamp-Massey linear complexity",
+   "description": "The GF(2) Berlekamp-Massey algorithm finds the shortest LFSR that generates a single bit stream $b_j(0..n-1)$ and records the profile $L(n)$. A random stream follows $n/2$; a stream from a linear recurrence of order $k$ saturates at $k$ once $n>2k$.",
+   "parameters": "L = 50,000 bits; streams: R250 j=1,32; MT j=1,32,53; RANNUM j=1,53; MINSTD j=1,31,53; RAND j=1,22; RANDU j=1,14,16,18,20,24,28; RANDM j=1,16,20,24; LOGISTIC j=1,40,53; MIDSQ j=1"
+  },
+  {
+   "name": "Cycle detection and RAND reconstruction",
+   "description": "Brent's algorithm was run on a bit-exact replica of the logistic map state (checked against rnglib for $10^6$ steps), and the full middle-square orbit was enumerated. The gfortran RAND() output was compared, for $10^8$ draws, with three candidate formulas built from the MINSTD state $k$: $\\lfloor k2^{22}/M\\rfloor/2^{22}$, $\\lfloor k/2^9\\rfloor/2^{22}$ and $\\lfloor (k-1)/2^9\\rfloor/2^{22}$.",
+   "parameters": "up to 4e9 steps (LOGISTIC); 1e8 draws (RAND)"
+  }
+ ],
+ "findings": [
+  {
+   "id": "D1",
+   "claim": "Validation: in exact arithmetic the good generators have uniform decimal digits down to $p=41$, and the test does not flag them before the depth predicted by their 53-bit resolution.",
+   "evidence": "N = 1e8. MT19937 and RANNUM pass every position $p\\le41$ (smallest p-value 0.007, RANNUM at p = 41 with $\\chi^2=22.6$; MT19937 at p = 41 has $\\chi^2=17.9$). Exact-digit counts were reproduced independently in Python for MT19937 (numpy RandomState(777) reproduces rnglib MT exactly), RANDU and MINSTD.",
+   "generators": [
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "digits_depth.png",
+   "category": "validation",
+   "is_anomaly": false
+  },
+  {
+   "id": "D2",
+   "claim": "For a uniform $B$-bit output $k/2^B$ the digit frequency test first fails at $p\\approx B-11$ when $N=10^8$ (in general $p^*\\approx B-\\tfrac12\\log_2N+1.3$), not at the naive $B\\log_{10}2$. The exact noncentrality model predicts the measured $\\chi^2$ at every depth.",
+   "evidence": "First failing p (exact digits, $S>4$): RAND ($B=22$) p = 10 ($\\chi^2=44.7$, predicted mean $9+\\lambda=32.8$, power 0.43; p = 11: 109 vs 152); R250 ($B=32$) p = 21 (136 vs 152); MT19937 p = 42 (166 vs 152); RANNUM p = 42 (174 vs 152). Deep agreement: RAND p = 15: 36,600 vs 36,609; R250 p = 24: 6,130 vs 6,109. Naive $B\\log_{10}2$ = 6.6, 9.6, 16.0. Each position deeper multiplies $\\lambda$ by about 4.",
+   "generators": [
+    "RAND",
+    "R250",
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "digits_depth.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "D3",
+   "claim": "The decimal digits of RANDU and RANDM are exactly periodic: $d_p$ has period $2^{30-p}$ and obeys $d_p(n+2^{29-p})\\equiv d_p(n)+5 \\pmod{10}$. As a result the digit test is too uniform at $p=5$ to $14$ and deterministically non-uniform from $p=17$, in exact agreement with the full-period theory.",
+   "evidence": "Measured minimal digit periods equal $2^{30-p}$ for p = 9..28 (brute force on 8,388,608 states). The half-period identity holds for 100% of tested n (for example 8,372,224 of 8,372,224 at p = 15). $\\chi^2$ at p = 5..12 is 0.017 to 0.076 (expected 9; left-tail p from 1e-8 down to 9.6e-12 at p = 10, S = -11.0); at p = 13, 14 it is 0.327, 0.560 (theory 0.326, 0.559). First right-tail failure p = 17, $\\chi^2=83.45$ (theory 83.45); p = 19: 1,335 (theory 1,335). RANDU and RANDM agree to 0.3% for $p\\ge15$ because both multipliers are $\\equiv3 \\pmod 8$ and sweep the same residue set.",
+   "generators": [
+    "RANDU",
+    "RANDM"
+   ],
+   "figure": "digits_heatmap.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D4",
+   "claim": "Storing any output in REAL*4 caps uniform decimal digits at $p=12$ for every generator with at least 24 bits, as predicted by the binade-enumeration model. RAND is unchanged because its 22-bit values fit exactly.",
+   "evidence": "REAL*4, N = 1e8: first failure at p = 13 for RANDU, RANDM, MINSTD, R250, RANNUM and MT19937 ($\\chi^2$ = 54.8, 34.4, 50.8, 56.7, 43.7, 49.5; predicted mean 53.1, power 0.93); p = 14: 140 to 164 (predicted 157); p = 15: 732 to 820 (predicted 715). RAND first failure stays at p = 10. RANDU's too-uniform band shrinks to p = 5, 6.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD",
+    "R250",
+    "RANNUM",
+    "MT19937",
+    "RAND"
+   ],
+   "figure": "digits_heatmap.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "D5",
+   "claim": "Naive digit extraction $\\mathrm{mod}(\\lfloor x\\,10^p\\rfloor,10)$ breaks for every generator, including MT19937, at $p=16$ in double and $p=8$ in REAL*4. This is a property of the test arithmetic, not of the generators. Below those depths individual digits are often wrong but the errors are unbiased, so the frequency test cannot see them.",
+   "evidence": "Double p = 16: $\\chi^2\\approx9.85\\times10^5$ for all generators, with even digits about $1.099\\times10^7$ against odd $9.0\\times10^6$, because $x\\,10^{16}>2^{53}$ for $x>0.9007$. REAL*4 p = 8: $\\chi^2\\approx6.9\\times10^7$, with even digits $1.83\\times10^7$ against odd $1.68\\times10^6$, because $x\\,10^8>2^{24}$. MT19937 mismatch rates against exact digits (double): 4.0e-4 (p = 13), 4.1e-3 (14), 0.039 (15), 0.35 (16). Yet naive p = 15 still passes (S = -0.8). REAL*4 mismatch is 0.22 at p = 7 while that position still passes.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "RAND",
+    "MINSTD",
+    "R250",
+    "RANNUM",
+    "MT19937"
+   ],
+   "figure": "digits_heatmap.png",
+   "category": "test_property",
+   "is_anomaly": true
+  },
+  {
+   "id": "D6",
+   "claim": "Null result: the exact rational digits of MINSTD, $k/(2^{31}-1)$, are uniform at every position up to 60, because $d_p$ is the leading digit of another MINSTD stream $10^{p-1}k \\bmod M$. The double that stores it is correct only to 15 or 16 digits, and its digits fail at $p=42$ like any 53-bit dyadic.",
+   "evidence": "Intended digits: no $S>4$ for p = 1..60 (largest $\\chi^2=17.1$ at p = 60, p = 0.047). Stored double: first failure p = 42 ($\\chi^2=67$, S = 10.2). Stored-vs-rational digit mismatch: 1.9e-4 (p = 13), 0.018 (p = 15), 0.19 (p = 16), 0.90 for p >= 18.",
+   "generators": [
+    "MINSTD"
+   ],
+   "figure": "digits_depth.png",
+   "category": "null_result",
+   "is_anomaly": false
+  },
+  {
+   "id": "D7",
+   "claim": "The logistic-map generator collapses onto a short cycle in double precision. It is the cycle, not the digits, that makes it fail the digit test at $N=10^8$.",
+   "evidence": "Brent's algorithm on the exact state (seed 777): tail 14,324,259 steps, then a cycle of 5,638,349 steps (about 15 repetitions within 1e8 draws). N = 1e8 fails at every p (p = 1: $\\chi^2=86.7$, S = 14.1). The first 1e7 outputs (before the cycle) pass every p <= 43 (|S| <= 1.6 for p <= 25) and first fail at p = 44.",
+   "generators": [
+    "LOGISTIC"
+   ],
+   "figure": "digits_heatmap.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D8",
+   "claim": "For MIDSQ, the gap between the intended value $k/10^8$ and its double shows up directly in the digits: the rational has only zeros beyond digit 8, the double has zeros or nines, and naive extraction mixes them in a third proportion. As a negative control, the generator fails at $p\\ge2$ because it sits on a 100-step cycle.",
+   "evidence": "Seed 12345678: tail 10,352, cycle 100 (seed 777 collapses to 0 after 2 steps). At p = 9..16 the intended digit is 0 in 100% of draws, the stored double gives 0 in 49.0% and 9 in 51.0%, and naive extraction gives 97.0% 0 and 3.0% 9 (p = 9). Naive digits are wrong in 44% of draws at p = 4..16 because the cycle values have trailing zeros. $\\chi^2=2.5\\times10^7$ at p = 2.",
+   "generators": [
+    "MIDSQ"
+   ],
+   "figure": "digits_heatmap.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "D9",
+   "claim": "Every low-order bit of RANDU and RANDM has an exactly computable short period: bit $j$ of $k/2^{31}$ has period $2^{30-j}$ for $j\\le28$, bit 29 is stuck at 0, bit 30 alternates and bit 31 is stuck at 1. Bits 32 to 53 of the double are dead.",
+   "evidence": "Measured on the full orbit ($2^{29}$ = 536,870,912) and by brute force on $2^{23}$ states: periods 1, 2, 1, 4, 8, ..., 2^21 for state bits 0..22, and residue return times $2^{i-2}$ for $i=3..31$, with the half-period flip confirmed for every bit $j\\le28$. Frequency test: bit 29 and bit 31 give $z=\\mp7071=\\mp\\sqrt{N}$ (N = 5e7). Bit 30 lag-1 correlation = -1.000. MINSTD control: no bit period up to $2^{21}$ in its 23 lowest bits.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD"
+   ],
+   "figure": "digits_lcgbits.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D10",
+   "claim": "RANDU's bits 16 to 27 have lag-1 autocorrelation close to +1/3 (bit 15: -1/3). The cause is that $65539\\equiv3 \\pmod{2^{16}}$: the low 16 state bits evolve by multiplication by 3. The exact full-period theory reproduces the measurement to six decimals. RANDM (with $6539\\equiv11 \\pmod{128}$) shows the alternating pattern $+\\tfrac12,-\\tfrac14,+\\tfrac18,\\dots$. A lag-1 test alone misses period-4 bits.",
+   "evidence": "N = 5e7: RANDU j = 16..23: r = 0.333251, 0.333496, 0.333008, 0.333984, 0.332031, 0.335937, 0.328125, 0.343750 (theory identical to 6 decimals), z about 2,357. j = 15: r = -0.333376 (theory -0.333374). High bits j <= 14: r about 1.4e-5 (about 1/65539). RANDM j = 22..27: -0.015625, 0.03125, -0.0625, 0.125, -0.25, 0.5 exactly; j <= 15: about 1.5e-4 = 1/6539 (z about 1.1, invisible at this N). Bit 28 (period 4) has lag-1 r = 0.000 but lag-2 r = -1.000.",
+   "generators": [
+    "RANDU",
+    "RANDM"
+   ],
+   "figure": "digits_lcgbits.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D11",
+   "claim": "Linear complexity exposes the GF(2)-linear generators exactly: every R250 bit stream is generated by a 250-bit LFSR, every MT19937 bit stream by a 19937-bit LFSR, and RANDU bit $j$ by one of length $2^{29-j}+1$. RANNUM (nonlinear scrambler), MINSTD, RAND and LOGISTIC look random.",
+   "evidence": "Berlekamp-Massey, L = 50,000: R250 j = 1, 32: 250. MT19937 j = 1, 32, 53: 19937. RANDU j = 16, 18, 20, 24, 28: 8193, 2049, 513, 33, 3 (formula $2^{29-j}+1$); RANDM identical at j = 16, 20, 24. RANNUM 25001 and 25005; MINSTD 25000; RAND 24999 and 25000; LOGISTIC 25000 and 25001. MIDSQ 10,448 (tail 10,352 plus cycle).",
+   "generators": [
+    "R250",
+    "MT19937",
+    "RANDU",
+    "RANDM",
+    "RANNUM",
+    "MINSTD",
+    "RAND",
+    "LOGISTIC",
+    "MIDSQ"
+   ],
+   "figure": "digits_lincomp.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D12",
+   "claim": "R250 satisfies $b_j(n)\\oplus b_j(n-103)\\oplus b_j(n-250)=0$ in every one of its 32 bits with zero violations. A blind scan of all lag pairs up to 600 rediscovers exactly its recurrence and nothing else.",
+   "evidence": "Zero violations in 49,999,750 tests per bit for j = 1..32, against 0.500 for MT19937, MINSTD and the rest. Lag scan (179,700 pairs, 20,000 words): only (103, 250) and (206, 500) are hit, the latter being the square of the trinomial $x^{250}+x^{103}+1$ over GF(2). Both have F = 0 and z = -800; every other pair has $|z|\\le4.27$, and the sd of z is 1.004.",
+   "generators": [
+    "R250",
+    "MT19937",
+    "MINSTD"
+   ],
+   "figure": "digits_xor.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D13",
+   "claim": "The logistic-map output is, bit for bit, a one-place shift of the previous output: $b_j(n)=b_{j+1}(n-1)\\oplus b_1(n-1)$. So each 53-bit output carries at most about 5 new bits, yet the standard per-bit lag-1 test is blind to this.",
+   "evidence": "N = 5e7 (double): zero violations for j = 1..26; j = 27: 6; j = 40: 24,370 (4.9e-4); j = 52: 0.36. Summing the binary entropy of the violation rates gives at most 4.12 + 1 = 5.1 bits of new information per output. Per-bit lag-1 |z| < 6, and that small excess is consistent with inflation by the 5.6e6 cycle. REAL*4: violations below 1e-4 for j <= 11 (j = 4: 1 in 5e7).",
+   "generators": [
+    "LOGISTIC"
+   ],
+   "figure": "digits_xor.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "D14",
+   "claim": "In double precision, MINSTD bits 32 to 53 are a copy of bits 1 to 22, because $k/(2^{31}-1)$ has a binary expansion of period 31. The copy is broken only by the rounding carry at bit 53. The blind lag scan also detects it.",
+   "evidence": "Violations of $b_j=b_{j-31}$: 10 in 5e7 at j = 32 (2.0e-7), rising as $\\tfrac13 2^{-(53-j)}$ to 0.333 at j = 53 (16,669,531). MT19937 control: 0.500. The per-bit frequency z of bits 32..53 repeats that of bits 1..22. Lag-scan sd of z = 1.033 against the predicted $\\sqrt{34/32}=1.031$ (bit 32 of the 32-bit word equals bit 1).",
+   "generators": [
+    "MINSTD"
+   ],
+   "figure": "digits_xor.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "D15",
+   "claim": "Bit 49 of the MINSTD double carries a weak but reproducible lag-1 correlation, $r\\approx5\\times10^{-4}$. It comes from the rounding carry, which ties bit 49 to state bits 18 to 24, and not from bit 18 itself.",
+   "evidence": "z = 4.9 (N = 5e7), 6.9 (seed 777, N = 2e8), 7.1 (seed 4242, N = 2e8). Bit 18: z = 0.66. Carry indicator (2.08% of draws): z = -2.7. Pairwise cross terms: z = -1.8 and -0.9. The effect is therefore a higher-order dependence, mechanism only partly identified. No other MINSTD bit exceeds |z| = 2.8 at N = 2e8 for j <= 43.",
+   "generators": [
+    "MINSTD"
+   ],
+   "figure": "digits_bitstats.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "D16",
+   "claim": "Converting to REAL*4 produces its own bit-level signatures: bits beyond 24 are progressively empty, R250 bit 24 is biased by round-half-to-even, and LOGISTIC develops strong lag-1 correlations in bits 26 to 41.",
+   "evidence": "N = 5e7. $P(b_j=1)\\approx\\tfrac12 2^{-(j-24)}$ for j > 24 (j = 25: z = -3535, P = 0.25). R250 bit 24: z = -13.3, against -13.8 predicted from the $2^{-8}$ tie probability in [0.5, 1). LOGISTIC REAL*4 bits 26..41: r = 0.14 to 0.25, because a bit beyond 24 is set only when x is small and the tent map leaves 0 slowly (doubling each step). Double-precision dead bits: RAND 23..53, RANDU and RANDM 32..53, R250 33..53.",
+   "generators": [
+    "R250",
+    "LOGISTIC",
+    "MT19937",
+    "RANNUM",
+    "RAND",
+    "RANDU"
+   ],
+   "figure": "digits_bitstats.png",
+   "category": "precision_artifact",
+   "is_anomaly": true
+  },
+  {
+   "id": "D17",
+   "claim": "Test-design traps. Stuck bits make every lag pair look significant unless they are masked, and RANDU's periodic low bits make the masked scan too regular.",
+   "evidence": "Before masking constant bits, every one of the 179,700 pairs was flagged: RANDU and RANDM at z of about -25 (3 stuck bits) and RAND at about -250 (10 dead bits). After masking: RANDU sd of z = 0.726 and RANDM 0.722, against 1.006 for MT19937 and a prediction of $\\sqrt{15/29}=0.719$ (14 of 29 live bits have period at most $2^{14}<L$ and contribute almost deterministic counts). Maximum |z| for RANDU is 3.18, against 4.6 for MT19937.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "RAND",
+    "MT19937"
+   ],
+   "figure": "digits_xor.png",
+   "category": "test_property",
+   "is_anomaly": true
+  },
+  {
+   "id": "D18",
+   "claim": "gfortran RAND() is exactly $\\lfloor (k-1)/2^9\\rfloor/2^{22}$, where $k$ is the Park-Miller state. This refines the shared fact that RAND is MINSTD truncated to a multiple of $2^{-22}$.",
+   "evidence": "Over 1e8 draws, the formula $\\lfloor (k-1)/2^9\\rfloor/2^{22}$ has 0 mismatches. Both $\\lfloor k2^{22}/M\\rfloor/2^{22}$ and $\\lfloor k/2^9\\rfloor/2^{22}$ have 195,385 mismatches (0.195%, about 1/512). Consequently RAND bits 1..22 differ from the MINSTD double's bits in up to 494 of 5e7 draws per bit.",
+   "generators": [
+    "RAND",
+    "MINSTD"
+   ],
+   "figure": "",
+   "category": "validation",
+   "is_anomaly": false
+  }
+ ],
+ "figures": [
+  {
+   "file": "digits_heatmap.png",
+   "caption": "Signed significance of the digit-frequency $\\chi^2$ test (9 dof, $N=10^8$) at each decimal position $p$. Red is non-uniform, blue is too uniform, and near-white is consistent with uniform. Exact digits fail at a depth set by each generator's resolution: RAND at 10, R250 at 21, RANDU and RANDM at 17 after a too-uniform band at $p=5$ to $14$. Naive extraction $\\mathrm{mod}(\\lfloor x\\,10^p\\rfloor,10)$ fails for every generator at $p=16$ in double and $p=8$ in REAL*4. LOGISTIC fails everywhere at $10^8$ draws because of its cycle, but passes on its first $10^7$ outputs."
+  },
+  {
+   "file": "digits_depth.png",
+   "caption": "Measured digit $\\chi^2$ against decimal position (markers) compared with the exact resolution model (dashed): $9+\\lambda_p$ for a uniform $B$-bit lattice, the deterministic full-period $\\lambda_p$ for RANDU and RANDM, and a binade enumeration for REAL*4. The gray band is the two-sided acceptance region at $10^{-4}$. Every dyadic generator fails near $p=B-11$, far deeper than $B\\log_{10}2$, while the exact rational digits of MINSTD never fail."
+  },
+  {
+   "file": "digits_bitplane.png",
+   "caption": "Bit-plane images: rows are the first 128 outputs and columns are bits $j=1$ to $53$ of the double (black = 1). Dead bits start after 22 (RAND), 31 (RANDU, RANDM) and 32 (R250). LOGISTIC shows a diagonal pattern because each row is the previous row shifted one bit left. The RANDU zoom shows bits 29 and 31 stuck, bit 30 alternating, and the period-4 and period-8 bits 28 and 27."
+  },
+  {
+   "file": "digits_bitstats.png",
+   "caption": "Per-bit frequency of ones (top) and lag-1 autocorrelation (bottom) in double (left) and REAL*4 (right) for $N=5\\times10^7$; color is the signed $\\log_{10}(1/p)$ and gray marks bits that never change. The LCG low bits are strongly correlated (RANDU bits 16 to 27 have $r\\approx1/3$), and REAL*4 progressively empties the bits beyond 24. MT19937, RANNUM and R250 pass everywhere; MINSTD passes except for a weak effect in bit 49."
+  },
+  {
+   "file": "digits_lcgbits.png",
+   "caption": "Exact low-order structure of RANDU and RANDM. (a) The measured period of bit $j$ equals $2^{30-j}$. (b) The period of decimal digit $p$ equals $2^{30-p}$. (c) Lag-1 bit autocorrelation, measured (markers) and computed over the full residue orbit (dashed); the $1/3$ plateau comes from $65539\\equiv3 \\pmod{2^{16}}$. (d) The Berlekamp-Massey linear complexity equals $2^{29-j}+1$."
+  },
+  {
+   "file": "digits_xor.png",
+   "caption": "Hidden bit identities. (a) R250 obeys its recurrence in every bit with zero violations, while the controls give 1/2. (b) The logistic output is a one-bit shift of the previous output, exactly in bits 1 to 26. (c) MINSTD doubles copy bits 1 to 22 into bits 32 to 53, broken only by the rounding carry $\\tfrac13 2^{-(53-j)}$. (d) A blind scan of 179,700 lag pairs flags only the two R250 lags; it also shows RANDU's too-narrow $z$ distribution and MINSTD's slightly wide one."
+  },
+  {
+   "file": "digits_lincomp.png",
+   "caption": "Berlekamp-Massey linear complexity profiles $L(n)$. A random-looking stream follows $n/2$ (RANNUM). R250 saturates at 250, MT19937 at 19937, and RANDU bits 16 and 24 at 8193 and 33, so each of those bit streams is exactly predictable by a linear feedback shift register after $2L$ observed bits."
+  }
+ ],
+ "tables": [
+  {
+   "title": "Deepest uniform decimal position: prediction against measurement (N = 1e8, failure means S > 4, i.e. p < 1e-4)",
+   "markdown": "| Generator / value tested | Resolution | Naive guess $B\\log_{10}2$ | Predicted first failure | Measured first failure ($\\chi^2$, S) | Too-uniform positions |\n|---|---|---|---|---|---|\n| RAND, $j/2^{22}$ | 22 bits | 6.6 | 10 (power 0.43), 11 (power 1.00) | 10 (44.7, 6.0) | none |\n| RANDU, $k/2^{31}$, $k\\equiv1,3 \\pmod 8$ | 29-bit lattice | 9.3 | 17 (deterministic $\\lambda=83.45$) | 17 (83.45, 13.5) | 5 to 14 |\n| RANDM, same lattice | 29-bit lattice | 9.3 | 17 | 17 (83.47, 13.5) | 5 to 14 |\n| R250, $w/2^{32}$ | 32 bits | 9.6 | 20 (0.43), 21 (1.00) | 21 (136, 24.1) | none |\n| MT19937, $k/2^{53}$ | 53 bits | 16.0 | 41 (0.43), 42 (1.00) | 42 (166, 30.3) | none |\n| RANNUM, $k/2^{53}$ | 53 bits | 16.0 | 41 (0.43), 42 (1.00) | 42 (174, 32.1) | none |\n| MINSTD, rational $k/(2^{31}-1)$ | none (prime modulus) | 9.3 | never | none up to 60 | none |\n| MINSTD, stored double | 53 to 54 bits | 16.0 | about 42 | 42 (67, 10.2) | none |\n| Any 24+ bit generator in REAL*4 | 24-bit significand | 7.2 | 13 (power 0.93) | 13 ($\\chi^2$ 34.4 to 56.7) | RANDU 5, 6; RANDM 5 to 7 |\n| Naive double arithmetic | $x\\,10^p>2^{53}$ | | 16 | 16 for all generators | |\n| Naive REAL*4 arithmetic | $x\\,10^p>2^{24}$ | | 8 | 8 for all generators | |\n| MIDSQ (seed 12345678) | 100-cycle | | | 2 ($2.5\\times10^7$) | 1 |\n| LOGISTIC, N = 1e8 / first 1e7 | 5,638,349-cycle | | | 1 (86.7, 14.1) / 44 | none |"
+  },
+  {
+   "title": "Exact low-bit structure of RANDU and RANDM (seed 777)",
+   "markdown": "| Bit $j$ of $k/2^{31}$ | Period (measured = theory) | RANDU lag-1 $r$ (measured, theory) | RANDM lag-1 $r$ | RANDU linear complexity |\n|---|---|---|---|---|\n| 1 | $2^{29}$ | about 1e-5 | about 1.5e-4 | 25000 (random-like) |\n| 14 | $2^{16}$ | 6.2e-5, 6.1e-5 | 1.8e-4 | 25002 (cannot saturate at L = 5e4) |\n| 15 | $2^{15}$ | -0.333376, -0.333374 | 1.2e-4 | |\n| 16 | $2^{14}$ | 0.333251, 0.333252 | 0.002687 | 8193 |\n| 18 | $2^{12}$ | 0.333008, 0.333008 | -0.000977 | 2049 |\n| 20 | $2^{10}$ | 0.332031, 0.332031 | -0.003906 | 513 |\n| 24 | $2^{6}$ | 0.312500, 0.312500 | -0.062500 | 33 |\n| 27 | $2^{3}$ | 0.500000, 0.500000 | 0.500000 | |\n| 28 | 4 | 0.000 (lag-2: -1.000) | 0.000 | 3 |\n| 29 | constant 0 | | | |\n| 30 | 2 | -1.000 | -1.000 | |\n| 31 | constant 1 | | | |"
+  },
+  {
+   "title": "Hidden identities and linear complexity (exact counts)",
+   "markdown": "| Test | Generator | Result | Random expectation |\n|---|---|---|---|\n| $b_j(n)\\oplus b_j(n-103)\\oplus b_j(n-250)$ | R250 | 0 violations of 49,999,750 in each of 32 bits | 0.5 |\n| same | MT19937, MINSTD, RANNUM | 0.500 | 0.5 |\n| Lag scan, 179,700 pairs | R250 | only (103, 250), (206, 500); z = -800 | max $|z|\\approx4.7$ |\n| Lag scan, sd of z | MT19937 / RANNUM / RAND / LOGISTIC | 1.006 / 1.003 / 1.001 / 1.003 | 1 |\n| Lag scan, sd of z | MINSTD | 1.033 (theory 1.031) | 1 |\n| Lag scan, sd of z | RANDU / RANDM | 0.726 / 0.722 (theory 0.719) | 1 |\n| $b_j(n)\\oplus b_{j+1}(n-1)\\oplus b_1(n-1)$ | LOGISTIC double | 0 of 5e7 for j <= 26; 4.9e-4 at j = 40; 0.36 at j = 52 | 0.5 |\n| $b_j\\oplus b_{j-31}$ | MINSTD double | 2.0e-7 at j = 32 to 0.333 at j = 53, equal to $\\tfrac13 2^{-(53-j)}$ | 0.5 |\n| Linear complexity, L = 5e4 | R250 / MT19937 | 250 / 19937 | 25000 |\n| Linear complexity | RANNUM, MINSTD, RAND, LOGISTIC | 24999 to 25005 | 25000 |\n| Linear complexity | MIDSQ bit 1 | 10448 | 25000 |"
+  },
+  {
+   "title": "Conversion artifacts: fraction of draws whose digit is wrong (MT19937 unless stated, N = 1e8)",
+   "markdown": "| p | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 |\n|---|---|---|---|---|---|---|---|---|---|\n| naive double vs exact | 4.1e-7 | 4.1e-6 | 3.9e-5 | 4.0e-4 | 4.1e-3 | 0.039 | 0.35 | 0.79 | 0.89 |\n| MINSTD double vs rational | 2.6e-7 | 1.9e-6 | 1.8e-5 | 1.9e-4 | 1.8e-3 | 0.018 | 0.19 | 0.77 | 0.89 |\n\n| p | 3 | 4 | 5 | 6 | 7 | 8 | 9 |\n|---|---|---|---|---|---|---|---|\n| naive REAL*4 vs exact REAL*4 digit | 2.0e-5 | 2.2e-4 | 2.2e-3 | 0.020 | 0.22 | 0.68 | 0.88 |"
+  }
+ ],
+ "code_files": [
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/digscan.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/bitscan.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/bitperiod.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/lagscan.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/bm.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/logcycle.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/minstd_carry.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/rand_vs_minstd.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/verify_digscan.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/midsq_orbit.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/dig_analysis.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/dig_predict.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/bit_analysis.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/bit_predict.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/make_figures.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/run_digscan.sh",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/run_bitscan.sh",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/digits/run_bm.sh"
+ ],
+ "caveats": [
+  "Sample sizes differ by test: the bit-level tests used N = 5e7 (MINSTD rechecked at 2e8), not 1e8; the lag scan used L = 20,000 words and lags up to 600; Berlekamp-Massey used L = 50,000 bits, so RANDU bits j <= 14 (complexity above 25,000) cannot saturate.",
+  "LOGISTIC results at N = 5e7 and 1e8 include about 6 and 15 repetitions of its 5,638,349-step cycle, which inflates its statistics. Only the first-1e7 rows are clean digit tests of LOGISTIC.",
+  "MIDSQ was seeded with 12345678 because seed 777 collapses to 0 after two steps. With 12345678 it enters a 100-cycle after 10,352 steps, so all MIDSQ results describe that cycle.",
+  "The REAL*4 prediction assumes a continuous uniform source rounded to nearest. It ignores that RANDU values below 2^-7 are exact in REAL*4 (so B = 31 there) and the binade-boundary weights; both effects are negligible at the measured depths.",
+  "The too-uniform significances for RANDU and RANDM depend on the ratio of N to the digit periods $2^{30-p}$, so they change with N. They are deterministic properties of the sequence, not sampling fluctuations.",
+  "The MINSTD bit-49 correlation (z about 7 at N = 2e8) is reproducible over two seeds, but its mechanism is only partly identified: it is not pairwise and appears to be a higher-order dependence exposed by the rounding carry.",
+  "Multiple testing: roughly 1,500 heat-map cells are evaluated at |S| > 4, so about 0.15 false alarms are expected overall. Isolated cells with 4 < S < 6 should be read together with the model prediction.",
+  "Planned but not done: joint (pair) digit tests and a conditional-entropy test of $d_p$ given the prefix, which would detect resolution near $p\\approx B\\log_{10}2$ rather than $B-11$; repeats of the digit heat map over several seeds; raster images of single bit streams; the exact Games-Chan complexity for the periodic bits.",
+  "rnd_test_claude.f was not modified (it belongs to the hist family). Scratch outputs (about 22 MB, largest file 1.1 MB) are in tests/digits/out."
+ ],
+ "rnglib_issues": [
+  "No implementation bug found. Exact-digit counts for MT19937, RANDU and MINSTD were reproduced independently in Python, and numpy RandomState(777).random_sample reproduces rnglib's MT19937 for seed 777 exactly.",
+  "Correction to the shared verified fact about RAND: gfortran RAND() equals $\\lfloor (k-1)/2^9\\rfloor/2^{22}$ with $k$ the Park-Miller state (0 mismatches in 1e8 draws). Truncating $k/(2^{31}-1)$ down to a multiple of $2^{-22}$ disagrees in 195,385 of 1e8 draws (1/512). It still has exactly $2^{22}$ possible values.",
+  "Usage hazard: rng_init(G_MIDSQ, 777_8) collapses to the absorbing state 0 after two steps ($777^2=603729\\to60\\to0$). The 8-digit seeds 12345678, 31415926, 77777777 and 98765432 all fall into the same 100-cycle (containing 86560000) after tails of 1,787 to 12,139 steps.",
+  "Usage hazard: the LOGISTIC generator from seed 777 enters a cycle of length 5,638,349 after a tail of 14,324,259 steps (Brent's algorithm on a replica of the state that is bit-exact against rnglib for 1e6 steps). Any family drawing more than about 2e7 LOGISTIC numbers is testing a repeated block.",
+  "Behavior note, not a bug: with rng_single=.true., IEEE round-half-to-even biases R250's REAL*4 bit 24 ($P(1)\\approx\\tfrac12-2^{-10}$, z = -13.3 at N = 5e7). rng_single has no effect on RAND, whose values already fit in 22 bits."
+ ],
+ "references": [
+  "D. E. Knuth, The Art of Computer Programming, Vol. 2: Seminumerical Algorithms, 3rd ed. (Addison-Wesley, Reading MA, 1997).",
+  "S. K. Park and K. W. Miller, Random number generators: good ones are hard to find, Communications of the ACM 31(10), 1192-1201 (1988).",
+  "S. Kirkpatrick and E. P. Stoll, A very fast shift-register sequence random number generator, Journal of Computational Physics 40(2), 517-526 (1981).",
+  "M. Matsumoto and T. Nishimura, Mersenne Twister: a 623-dimensionally equidistributed uniform pseudo-random number generator, ACM Transactions on Modeling and Computer Simulation 8(1), 3-30 (1998).",
+  "D. Blackman and S. Vigna, Scrambled linear pseudorandom number generators, ACM Transactions on Mathematical Software 47(4), 36 (2021).",
+  "J. L. Massey, Shift-register synthesis and BCH decoding, IEEE Transactions on Information Theory 15(1), 122-127 (1969).",
+  "E. R. Berlekamp, Algebraic Coding Theory (McGraw-Hill, New York, 1968).",
+  "R. A. Games and A. H. Chan, A fast algorithm for determining the complexity of a binary sequence with period 2^n, IEEE Transactions on Information Theory 29(1), 144-146 (1983).",
+  "G. Marsaglia, Random numbers fall mainly in the planes, Proceedings of the National Academy of Sciences 61(1), 25-28 (1968).",
+  "R. P. Brent, An improved Monte Carlo factorization algorithm, BIT Numerical Mathematics 20, 176-184 (1980).",
+  "A. Rukhin et al., A Statistical Test Suite for Random and Pseudorandom Number Generators for Cryptographic Applications, NIST Special Publication 800-22 Rev. 1a (2010).",
+  "P. L'Ecuyer and R. Simard, TestU01: a C library for empirical testing of random number generators, ACM Transactions on Mathematical Software 33(4), 22 (2007).",
+  "J. von Neumann, Various techniques used in connection with random digits, National Bureau of Standards Applied Mathematics Series 12, 36-38 (1951).",
+  "S. M. Ulam and J. von Neumann, On combination of stochastic and deterministic processes, Bulletin of the American Mathematical Society 53, 1120 (1947).",
+  "D. Goldberg, What every computer scientist should know about floating-point arithmetic, ACM Computing Surveys 23(1), 5-48 (1991).",
+  "IEEE Standard for Floating-Point Arithmetic, IEEE Std 754-2008 (2008)."
+ ]
+}

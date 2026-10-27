@@ -1,0 +1,3 @@
+LCG69069 tuples checked:   4294967296  cpu    226.1 s
+  state after P steps equals start: T   state after P/2 steps equals start: F
+wrote verify_LCG69069.txt

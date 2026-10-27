@@ -1,0 +1,57 @@
+== src=7 lags=103,250,0,0
+   kappa3(I) =  -2.80402E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585733  0.585839  0.586024
+src=7 dec=1 T(103,250) =  -2.708923E-06 +-   3.402E-06   z =        -0.80
+== src=6 lags=103,250,0,0
+   kappa3(I) =  -2.33046E-06 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585972  0.585838  0.585925
+src=6 dec=1 T(103,250) =  -3.571204E-06 +-   3.401E-06   z =        -1.05
+== src=5 lags=103,250,0,0
+   kappa3(I) =   7.10828E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   1.000000  0.792949  0.292829
+src=5 dec=1 T(103,250) =   1.786701E-02 +-   3.297E-06   z =      5419.71
+== src=21 dec=2 lags=103,250,0,0
+   kappa3(I) =   7.10588E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   1.000000  0.792933  0.292936
+src=21 dec=2 T(103,250) =   1.786897E-02 +-   3.298E-06   z =      5418.36
+== src=21 dec=3 lags=103,250,0,0
+   kappa3(I) =   2.19385E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585797  0.586138  0.585781
+src=21 dec=3 T(103,250) =   9.865549E-06 +-   3.402E-06   z =         2.90
+== src=22 lags=103,250,0,0
+   kappa3(I) =   7.10850E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   1.000000  0.792723  0.292804
+src=22 dec=1 T(103,250) =   1.785816E-02 +-   3.296E-06   z =      5418.38
+== src=23 lags=103,250,0,0
+   kappa3(I) =   2.63870E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.739554  0.662528  0.476975
+src=23 dec=1 T(103,250) =   4.460561E-03 +-   3.395E-06   z =      1313.67
+== src=24 lags=103,250,0,0
+   kappa3(I) =  -1.47216E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.500052  0.542987  0.646554
+src=24 dec=1 T(103,250) =  -2.406370E-07 +-   4.106E-06   z =        -0.06
+== src=25 lags=103,250,0,0
+   kappa3(I) =  -6.58451E-06 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585517  0.585866  0.585747
+src=25 dec=1 T(103,250) =  -2.505543E-06 +-   3.404E-06   z =        -0.74
+== src=20 lags=147,250,0,0
+   kappa3(I) =   7.10509E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   1.000000  0.792840  0.292978
+src=20 dec=1 T(147,250) =   1.785500E-02 +-   3.296E-06   z =      5417.37
+== src=20 lags=168,521,0,0
+   kappa3(I) =   7.10408E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   1.000000  0.792880  0.293065
+src=20 dec=1 T(168,521) =   1.785517E-02 +-   3.297E-06   z =      5416.09
+== src=1 lags=1,2,0,0
+   kappa3(I) =   3.52414E-04 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.588095  0.586910  0.584509
+src=1 dec=1 T(1,2) =  -7.883321E-06 +-   3.402E-06   z =        -2.32
+== src=2 lags=1,2,0,0
+   kappa3(I) =  -1.77159E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585464  0.585755  0.585760
+src=2 dec=1 T(1,2) =  -3.217334E-06 +-   3.403E-06   z =        -0.95
+== src=4 lags=1,2,0,0
+   kappa3(I) =  -1.12795E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585611  0.585666  0.585735
+src=4 dec=1 T(1,2) =   4.992986E-06 +-   3.401E-06   z =         1.47
+== src=3 lags=1,2,0,0
+   kappa3(I) =  -1.12923E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585611  0.585667  0.585735
+src=3 dec=1 T(1,2) =   4.992986E-06 +-   3.401E-06   z =         1.47
+== src=7 lags=1,2,0,0
+   kappa3(I) =   2.26220E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585884  0.586089  0.585795
+src=7 dec=1 T(1,2) =   6.238429E-06 +-   3.402E-06   z =         1.83
+== src=9 lags=1,2,0,0
+   kappa3(I) =  -1.65452E-02 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.499836  0.499596  0.646537
+src=9 dec=1 T(1,2) =  -1.150012E-05 +-   4.309E-06   z =        -2.67
+== src=1 lags=103,250,0,0
+   kappa3(I) =  -2.13071E-05 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585859  0.585861  0.586041
+src=1 dec=1 T(103,250) =  -3.483899E-06 +-   3.401E-06   z =        -1.02
+== src=4 lags=103,250,0,0
+   kappa3(I) =  -8.13090E-06 +-  1.690E-05   P(acc | rej,rej), P(acc | acc,acc), P(acc | mixed) =   0.585777  0.585571  0.585743
+src=4 dec=1 T(103,250) =  -4.086052E-06 +-   3.402E-06   z =        -1.20

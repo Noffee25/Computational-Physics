@@ -1,0 +1,1 @@
+S_mskip_randm|alg='mskip' src=2 ntherm=10000 nmeas=8000000 nbatch=800

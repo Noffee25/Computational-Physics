@@ -1,0 +1,375 @@
+{
+ "family": "ising",
+ "title": "Hidden errors in Monte Carlo: the 2D Ising model as a physical test of random number generators",
+ "summary": "I computed the exact energy and specific heat of the 16x16 periodic Ising model at $K_c$ ($e = 1.4530648528$, $C = 1.4987049594$) from the Kaufman/Ferdinand-Fisher solution, validated it against brute-force enumeration and transfer matrices, and ran Wolff cluster and Metropolis simulations in Fortran with every rnglib generator plus 15 shift-register variants. The Ferrenberg-Landau-Wong anomaly is reproduced: with $10^7$ Wolff clusters R250 gives $\\Delta e = +1.97\\times10^{-3}$ (+16.5 sigma) and $\\Delta C = -0.0522$ (-46.7 sigma), while MT19937 and RANNUM agree with the exact values and Metropolis with the same R250 stream is unbiased ($\\Delta e = +0.3\\times10^{-4} \\pm 1.9\\times10^{-4}$). The cause is a generator property: when the bond tests 103 and 250 draws earlier were both rejected, R250 accepts the next test with probability exactly 1 (ideal 0.586), and the third cumulant $\\kappa_3$ of the accept/reject outcomes predicts which variants are biased. Decimating by 2 or 4 or XOR-ing two R250 streams leaves the same recurrence and the same bias (confirmed with Berlekamp-Massey), decimating by 3 or 5 removes it, summing two streams mod $2^{32}$ leaves 38% of it as $\\kappa_3$ predicts, and an additive lagged Fibonacci generator with the same lags flips the sign of the bias. A scan over register lengths shows the bias decays as $e^{-q/265}$ in draws and survives even when the correlated draws fall in different clusters. Separately, Metropolis driven by RANDU or RANDM becomes exactly periodic after one generator period, so naive error bars overstate significance; with error bars computed from independent periods only, RANDM still shows a real Metropolis bias of -5.8 sigma whose sign flips when the sweep uses 257 instead of 256 draws.",
+ "methods": [
+  {
+   "name": "Exact finite-lattice reference values",
+   "description": "ln Z for an n x m torus from the Kaufman (1949) four-term product formula in the Ferdinand-Fisher (1969) form: $Z = \\tfrac12 (2\\sinh 2K)^{nm/2}\\sum_{i=1}^4 Z_i$ with products of $2\\cosh(m\\gamma_l/2)$ and $2\\sinh(m\\gamma_l/2)$ over odd and even $l$, $\\cosh\\gamma_l = \\cosh 2K\\coth 2K - \\cos(\\pi l/n)$, and the signed $\\gamma_0 = 2K + \\ln\\tanh K$. Observables: $e = N^{-1}\\partial_K \\ln Z = \\langle\\sum_{\\langle ij\\rangle} s_i s_j\\rangle/N$ and $C = K^2 N^{-1}\\partial_K^2 \\ln Z = K^2(\\langle B^2\\rangle - \\langle B\\rangle^2)/N$, where $B = \\sum_{\\langle ij\\rangle}s_is_j$. Derivatives by mpmath numerical differentiation at 60 digits. Validation: (i) exact density of states by brute-force enumeration of all $2^{nm}$ states for 4x4, 3x5, 5x3, 4x5 and 2x6 at K = 0.2, $K_c$ and 0.7; (ii) float64 row-to-row transfer matrix (eigvalsh, Richardson-extrapolated finite differences) for L = 6, 8, 10 at K = 0.40, $K_c$ and 0.50.",
+   "parameters": "mpmath dps = 60; L = 4, 8, 16, 24, 32, 48, 64 at $K_c = \\tfrac12\\ln(1+\\sqrt2)$; L = 16 at K = 0.36 to 0.55"
+  },
+  {
+   "name": "Wolff single-cluster update",
+   "description": "Seed site $i_0 = \\lfloor uN\\rfloor + 1$ (one draw), flipped immediately and pushed on a stack (LIFO). Pop a site, then visit neighbours in the order +x, -x, +y, -y. Each neighbour still carrying the original spin $s_0$ gets one draw $u$ and is added (flipped and pushed) if $u < p_{add} = 1 - e^{-2K}$ ($= 2-\\sqrt2 = 0.585786$ at $K_c$). Each bond is tested at most once, so one cluster uses at most $2N+1$ draws. Variant: FIFO queue (breadth-first growth). B and M are measured after every cluster flip by a full lattice sum. Thermalisation: $10^4$ clusters ($2\\times10^3$ for L = 64) from a random start.",
+   "parameters": "L = 8, 16, 32, 64; K = 0.40, K_c, 0.50; $10^6$ to $10^7$ clusters per run (main L = 16 runs: $10^7$ clusters, 1000 batches of $10^4$); seed 777 unless stated"
+  },
+  {
+   "name": "Metropolis updates",
+   "description": "Typewriter sweep over sites 1..N. One draw per site regardless of $\\Delta E$ (so the draw-to-site map is fixed), flip if $\\Delta E \\le 0$ or $u < e^{-K\\Delta E}$ with $\\Delta E \\in \\{4, 8\\}$. One measurement per sweep, $10^4$ thermalisation sweeps. Variants: random-site selection (2 draws per attempt, N attempts per sweep), and 'mskip', which discards one extra draw per sweep (N+1 = 257 draws per sweep) to change which lattice sites a given draw lag connects.",
+   "parameters": "L = 16, K_c; $10^7$ sweeps for MT/RANNUM/R250; RANDU/RANDM: one generator period ($2^{21}$ sweeps) per seed, 4 and 7 seeds; MINSTD $4\\times10^6$ + 3 x $2^{21}$; mskip RANDM $8\\times10^6$"
+  },
+  {
+   "name": "Error analysis and hypothesis test",
+   "description": "Fortran writes exact integer batch sums of B, $B^2$, cluster size, |M| and $M^2$, plus the autocorrelation sums $\\sum_t B_t B_{t-k}$ for k < 64. The error on e comes from batch means. The error on C comes from a delete-one-batch jackknife. $\\tau_{int}$ is computed with Sokal's automatic window (c = 6) and cross-checked against the ratio of batch-means variance to naive variance. A binning check merges batches 4 and 10 at a time. Each deviation is reported as $z = (X_{MC} - X_{exact})/\\sigma$, tested against a N(0,1) null. Pull-distribution test: the z values of all good-generator runs are compared with N(0,1) by $\\chi^2$ and Kolmogorov-Smirnov tests.",
+   "parameters": "100 to 1000 batches of $10^4$ to 16384 updates (batch length > 1000 $\\tau_{int}$); $\\tau_{int,E}$ = 2.6 clusters (Wolff, L=16), 5.8 sweeps (Metropolis)"
+  },
+  {
+   "name": "Generator three-point statistics",
+   "description": "For lags (p, q), the moment $T(p,q) = \\langle(\\tfrac12-u_n)(\\tfrac12-u_{n-p})(\\tfrac12-u_{n-q})\\rangle$ and the connected third cumulant of the Wolff accept/reject outcomes (acceptance indicators) $I = [u < p_{add}]$, $\\kappa_3 = \\langle(I_n - p)(I_{n-p'}-p)(I_{n-q}-p)\\rangle$, computed from the full 2x2x2 contingency table. Also reported: the conditional acceptance probabilities P(accept | both earlier rejected), P(accept | one rejected), P(accept | both accepted). Null sd of $\\kappa_3$: $\\sqrt{(p(1-p))^3/n}$.",
+   "parameters": "$5\\times10^7$ draws ($2\\times10^8$ for rechecks); lags (103,250) for shift registers, (1,2) for LCGs and LOGISTIC"
+  },
+  {
+   "name": "GF(2) algebra of shift registers",
+   "description": "Irreducibility of $x^q + x^p + 1$ (and Ziff's four-tap polynomial) checked with Rabin's test: $x^{2^q} \\equiv x \\bmod f$ and $\\gcd(x^2+x, f) = 1$, using integer bit-vector polynomial arithmetic. For Mersenne-prime q, irreducible implies primitive. Berlekamp-Massey applied to a 1200-bit column of the R250 sequence decimated by d gives the minimal linear recurrence (degree and taps).",
+   "parameters": "q = 89, 127, 521, 607, 1279, 2281, 9689; d = 1, 2, 3, 4, 5, 7"
+  },
+  {
+   "name": "R250 variants and remedies",
+   "description": "Own GFSR implementation with up to four taps and Maier-style seeding (MINSTD fill, bit-31 fill, diagonal of forced bits for q > 220), verified bit for bit against rnglib R250 over $10^7$ words and over 100 Wolff batches. Variants: decimation by d (keep every d-th word); XOR of two independently seeded R250 streams; sum mod $2^{32}$ of two streams; additive lagged Fibonacci $x_n = x_{n-103}+x_{n-250} \\bmod 2^{32}$; time-reversed taps (147,250); R250 XOR MT19937; Ziff four-tap (471, 1586, 6988, 9689). Linear prediction tested: $\\Delta C_{pred} = \\Delta C_{R250}\\,\\kappa_3/\\kappa_3^{R250}$.",
+   "parameters": "Wolff L = 16, K_c; $2\\times10^6$ to $8\\times10^6$ clusters per variant"
+  },
+  {
+   "name": "Register-length scan and consumption geometry",
+   "description": "Two-tap XOR GFSR(p,q) for (38,89), (63,127), (103,250), (168,521), (273,607), (418,1279), (1029,2281), (4187,9689). For $q \\ge 250$, fit $\\Delta C(q) = A e^{-q/q_0}$ (weighted least squares). Diagnostic run: for each draw, record its target site and cluster index, then accumulate P(draw $n-\\ell$ lies in the same cluster as draw n) and the histogram of draws per cluster.",
+   "parameters": "$2\\times10^6$ to $6\\times10^6$ clusters per q; diagnostic $4\\times10^4$ clusters with MT"
+  },
+  {
+   "name": "Exact-periodicity and coupling test",
+   "description": "With 256 draws per sweep and period $2^{29}$, the chain $X_t$ and the shifted chain $Y_t = X_{t+P}$ (P = $2^{21}$ sweeps) see identical random numbers at identical sites. Test: compare integer batch sums of batch b and batch b+128 (batches of 16384 sweeps). Coupling time: two Metropolis chains from independent random states driven by common MT draws, run until they are identical or global mirror images. Honest errors: one period per seed ('universe'), combined across seeds with an inverse-variance weighted mean and a between-universe $\\chi^2$.",
+   "parameters": "20 coupling trials, cap $2\\times10^5$ sweeps; RANDU 4 and RANDM 7 universes"
+  },
+  {
+   "name": "LCG lattice structure at sweep lags",
+   "description": "2D spectral test (Gauss-Lagrange reduction) gives $\\nu_2(k)$, the shortest $(h_1,h_2)$ with $h_1 + h_2 a^k \\equiv 0 \\bmod m$, for k = 1..1024. An exhaustive search looks for short integer relations among the lags that a 16x16 typewriter sweep makes adjacent ({1, 16, 240, 255, 256} or {1, 16, 241, 256, 257}). The 2-adic valuation of $a^{256}-1$ is computed, along with pair correlations of the indicators $[u<e^{-4K_c}]$ and $[u<e^{-8K_c}]$ at lags 1, 2, 16, 255, 256, 257, 512.",
+   "parameters": "RANDU a=65539, RANDM a=6539 (m = $2^{31}$), MINSTD; $5.1\\times10^7$ draws for indicator tests"
+  }
+ ],
+ "findings": [
+  {
+   "id": "ising-F1",
+   "claim": "The exact 16x16 values at $K_c$ are e = 1.453064852813477 and C = 1.498704959400026 (L = 32: e = 1.433658466146, C = 1.846767590040). They match the literature values 1.453064 and 1.498704, and the exact code reproduces brute-force enumeration to 60 digits.",
+   "evidence": "Brute force vs Kaufman on 4x4, 3x5, 5x3, 4x5, 2x6 at K = 0.2, K_c, 0.7: max |deviation| = 4e-60. Transfer matrix L = 6, 8, 10: |de| <= 6e-12, |dC| <= 1.3e-10 at K = 0.40, K_c, 0.50. Infinite-lattice check: e(L) decreases toward $\\sqrt2$ (1.5656, 1.4916, 1.4531, 1.4337, 1.4239 for L = 4, 8, 16, 32, 64).",
+   "generators": [],
+   "figure": "",
+   "category": "validation",
+   "is_anomaly": false
+  },
+  {
+   "id": "ising-F2",
+   "claim": "Good generators pass. MT19937 and RANNUM agree with the exact values for both algorithms (Wolff, L = 16, $10^7$ clusters: MT z_e = -0.9, z_C = -0.8; RANNUM z_e = -1.5, z_C = +2.4; Metropolis $10^7$ sweeps: MT -0.3/+1.2, RANNUM -0.6/+1.0). The error bars are stable under 10x longer batches, but across 12 MT/RANNUM runs the pulls are mildly over-dispersed.",
+   "evidence": "Binning: the ratio of the error estimate with 10x longer batches to the original has median 1.00 (IQR 0.92 to 1.10). Pulls over 12 MT/RANNUM runs (24 z values): rms 1.35, chi2 = 43.6/24 (p = 0.008), KS p = 0.26, driven by D_L32_mt seed 777 (z_e = -2.5, z_C = +2.8; a rerun with seed 24680 gave +0.7/-0.7) and K = 0.40 MT (z_e = +2.6). Broader null set of 50 pulls: rms 1.15, chi2 = 66.7/50 (p = 0.057). Inflating all errors by 1.35 would change no conclusion below.",
+   "generators": [
+    "MT19937",
+    "RANNUM"
+   ],
+   "figure": "ising_headline.png",
+   "category": "validation",
+   "is_anomaly": false
+  },
+  {
+   "id": "ising-F3",
+   "claim": "This reproduces the Ferrenberg-Landau-Wong hidden error. Wolff with R250 on 16x16 at K_c gives e = 1.455032(119) and C = 1.44654(112), i.e. $\\Delta e = +1.97\\times10^{-3}$ (+16.5 sigma) and $\\Delta C = -0.0522$ (-46.7 sigma, a 3.5% error). The bias does not depend on the seed or on the cluster growth order.",
+   "evidence": "$10^7$ clusters, 1000 batches, $\\tau_{int}$ = 2.44. Seeds 1, 65536, 314159 ($10^6$ clusters each): $\\Delta C$ = -0.0546, -0.0501, -0.0502 (-18.5, -14.7, -13.2 sigma). FIFO growth: $\\Delta C = -0.0521 \\pm 0.0024$ (-21.5 sigma), $\\Delta e = +2.32\\times10^{-3}$ (+8.7 sigma). A bit-identical own implementation reproduced the rnglib run batch for batch.",
+   "generators": [
+    "R250"
+   ],
+   "figure": "ising_headline.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F4",
+   "claim": "The same R250 stream drives Metropolis without detectable bias: $\\Delta e = (+0.27 \\pm 1.88)\\times10^{-4}$ and $\\Delta C = (+0.57 \\pm 1.47)\\times10^{-3}$. At 2 sigma, any Metropolis bias is below 20% of the Wolff energy bias and below 7% of the Wolff specific heat bias.",
+   "evidence": "Typewriter sweep, $10^7$ sweeps, z = +0.1 (e) and +0.4 (C). Random-site Metropolis, $2\\times10^6$ sweeps: z = +0.4, -0.1. In a typewriter sweep the draws 103 and 250 back always belong to fixed sites 13 and 6 lattice spacings away (distance-1 coincidence probability exactly 0). In Wolff, the draws n, n-103 and n-250 all belong to the same cluster for 24% of draws.",
+   "generators": [
+    "R250"
+   ],
+   "figure": "ising_headline.png",
+   "category": "null_result",
+   "is_anomaly": false
+  },
+  {
+   "id": "ising-F5",
+   "claim": "Mechanism (generator flaw). Because $u_n = u_{n-103} \\oplus u_{n-250}$ bitwise and $p_{add} = 0.586 > 1/2$, two rejected tests (both $u \\ge 0.586$, top bit 1) force the next test at lag (103,250) to accept with probability exactly 1. One rejection gives 0.293 and two acceptances give 0.793, versus 0.586 for a good generator. This is a huge third-order correlation in the Wolff accept/reject outcomes, with no pair correlation at all.",
+   "evidence": "$5\\times10^7$ draws: R250 $\\kappa_3 = 0.07108 \\pm 0.00002$ (about 4200 sigma), P(acc|R,R) = 1.000000, P(acc|R,A) = 0.2928, P(acc|A,A) = 0.7929. Third moment T(103,250) = 0.017867 versus the theoretical 1/56 = 0.017857. MT19937, RANNUM, MINSTD, RANDU at (103,250): |z| <= 1.7. For comparison, RANDU at lags (1,2) has $\\kappa_3 = 3.5\\times10^{-4}$ (21 sigma), 200 times smaller.",
+   "generators": [
+    "R250",
+    "MT19937",
+    "RANNUM",
+    "RANDU"
+   ],
+   "figure": "ising_mechanism.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F6",
+   "claim": "Two plausible fixes are traps. Decimating R250 by 2 or 4, or XOR-ing two independently seeded R250 streams, gives exactly the same trinomial recurrence and the same bias. Decimating by 3 or 5, or XOR-ing with MT19937, removes the bias.",
+   "evidence": "Berlekamp-Massey: decimation by 2 and by 4 gives taps (103, 250). Decimation by 3 gives the four-tap recurrence (103, 152, 201, 250), by 5 gives (50, 103, 200, 250), by 7 gives 8 taps. XOR of two sequences with the same GF(2) recurrence obeys that recurrence. Measured $\\Delta C$: dec2 -0.0524 +- 0.0025 (-21.3 sigma), dec4 -0.0521 +- 0.0024 (-21.6), XOR2 -0.0532 +- 0.0028 (-18.9), against R250 -0.0522. dec3 +0.0009 +- 0.0021 (+0.4), dec5 +0.0015 +- 0.0019 (+0.8), R250 XOR MT +0.0015 +- 0.0021 (+0.7). $\\kappa_3$: dec2 0.07106, XOR2 0.07109, dec3 2e-5 +- 2e-5.",
+   "generators": [
+    "R250"
+   ],
+   "figure": "ising_remedies.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F7",
+   "claim": "Adding two R250 streams mod $2^{32}$ only partly helps. It keeps a correlation of 37% of R250's in the accept/reject outcomes ($\\kappa_3$ = 0.0264) and gives $\\Delta C = -0.0201 \\pm 0.0025$ (-8.2 sigma). The linear prediction $\\Delta C_{R250}\\kappa_3/\\kappa_3^{R250} = -0.0194$ agrees within 0.3 sigma.",
+   "evidence": "$2\\times10^6$ clusters; $\\Delta e = +5.9\\times10^{-4}$ (+2.1 sigma). Generator level: T(103,250) = 0.004461 (one quarter of R250), P(acc|R,R) = 0.740, P(acc|R,A) = 0.477, P(acc|A,A) = 0.663.",
+   "generators": [
+    "R250"
+   ],
+   "figure": "ising_remedies.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F8",
+   "claim": "The additive lagged Fibonacci generator $x_n = x_{n-103}+x_{n-250} \\bmod 2^{32}$ has zero third moment T but a negative accept/reject correlation ($\\kappa_3 = -0.0147$), and it biases the Wolff specific heat in the opposite direction to R250: $\\Delta C = +0.0061 \\pm 0.0014$ (+4.5 sigma). The sign matches the $\\kappa_3$ prediction, but the magnitude is 57% of the predicted +0.0108 (3.4 sigma below it).",
+   "evidence": "Two seeds with $4\\times10^6$ clusters each: +0.00608 +- 0.0019 and +0.00616 +- 0.0020. $\\Delta e = -1.5\\times10^{-4} \\pm 1.4\\times10^{-4}$. Generator level: T = -2e-7 (z = -0.06), P(acc|R,R) = 0.500, P(acc|R,A) = 0.647, P(acc|A,A) = 0.543 (analytic 0.5429).",
+   "generators": [],
+   "figure": "ising_remedies.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F9",
+   "claim": "For two-tap XOR shift registers, the Wolff bias decays exponentially with the register length q: $\\Delta C = A e^{-q/q_0}$ with $q_0 = 265 \\pm 16$ draws (1.11 +- 0.07 cluster updates). The bias is still 12 sigma at q = 521, where no correlated triple can lie inside a single cluster, so correlations between consecutive clusters also matter. Registers with $q \\ge 1279$ show no bias.",
+   "evidence": "$\\Delta C$: q=89 -0.0965 (-40.9 sigma), 127 -0.0646 (-29.5), 250 -0.0522 (-46.7), 521 -0.0182 (-12.1), 607 -0.0138 (-8.8), 1279 -0.0026 (-1.6), 2281 +0.0004 (+0.3), 9689 -0.0011 (-0.7). Fit for q >= 250: A = -0.134 +- 0.009, chi2 = 1.6/4. A single cluster uses at most 2N+1 = 513 draws (436 observed), and the probability that draw n-250 lies in the same cluster is 0.24. Energy autocorrelation of the chain: $\\tau_{int}$ = 2.64, $\\tau_{exp} \\approx$ 3.0 clusters, so the bias decays faster than the chain memory. Because $\\kappa_3$ is the same 0.0711 for every two-tap register, it is the lag geometry, not the size of the correlation, that sets the bias. The reversed taps (147,250) give -0.0421 (-16.4 sigma), 20% less than (103,250), so p matters too.",
+   "generators": [
+    "R250"
+   ],
+   "figure": "ising_lag_scan.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F10",
+   "claim": "The R250 Wolff bias depends on lattice size. It is small at L = 8, where a cluster uses only 70 draws, and saturates at a 3.4% to 4.0% underestimate of C for L >= 16. It is not limited to criticality: it is also present at K = 0.40 and K = 0.50.",
+   "evidence": "$\\Delta C/C$: L=8 -0.19 +- 0.11% (-1.8 sigma), L=16 -3.48 +- 0.07%, L=32 -4.03 +- 0.21% (-18.8 sigma), L=64 -3.36 +- 0.47% (-7.2 sigma), with 70, 239, 810 and 2722 draws per cluster. MT controls are within 2.8 sigma. At L=16: K=0.40 -2.87 +- 0.41% (-7.1 sigma), K=0.50 -1.37 +- 0.27% (-5.0 sigma); MT +0.26 +- 0.41% and +0.14 +- 0.29%.",
+   "generators": [
+    "R250",
+    "MT19937"
+   ],
+   "figure": "ising_size_coupling.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F11",
+   "claim": "The error is hidden at modest statistics. The running R250 energy stays within 2 sigma of the exact value up to about $10^5$ clusters and only becomes unmistakable after about $10^6$, because the bias is fixed while the error bar shrinks as $n^{-1/2}$.",
+   "evidence": "Running z for the energy, using MT-calibrated sigma: +0.4 at $10^4$ clusters, +1.9 at $10^5$, +6.9 at $10^6$, +15.9 at $10^7$. For the specific heat: -2.1, -3.8, -13.7, -42.0.",
+   "generators": [
+    "R250",
+    "MT19937"
+   ],
+   "figure": "ising_hidden_error_growth.png",
+   "category": "test_property",
+   "is_anomaly": false
+  },
+  {
+   "id": "ising-F12",
+   "claim": "A Metropolis typewriter sweep driven by RANDU or RANDM becomes exactly periodic. The generator period $2^{29}$ is an exact multiple of the N = 256 draws per sweep, and two Metropolis chains fed the same random numbers coalesce within about 40 sweeps. Every later period then exactly repeats the first, so naive batch-means errors are too small by a factor 2.2, which creates spurious significance.",
+   "evidence": "Batch b and batch b+128 (16384 sweeps each) are identical in all integer sums for 482 of 482 pairs, for both RANDU and RANDM; MT has 0 of 872. Coupling test (20 trials, common MT draws, random starts): chains coalesce after 15 to 84 sweeps (median 39), 12 to identical states and 8 to global mirror images. Naive versus honest single-period z: RANDU e -3.02 vs -1.37, C +2.30 vs +1.03; RANDM e -6.08 vs -2.69. Wolff runs, whose draw consumption is not synchronised with the lattice, show 0 duplicated batches despite 4.4 periods.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MT19937"
+   ],
+   "figure": "ising_metropolis_periodicity.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F13",
+   "claim": "RANDM biases sequential Metropolis at L = 16, and the sign of the bias depends on how the stream maps onto the lattice. With 256 draws per sweep, $\\Delta e = (-8.8 \\pm 1.5)\\times10^{-4}$ (-5.8 sigma, 7 independent periods); with 257 draws per sweep, $\\Delta e = (+12.9 \\pm 2.1)\\times10^{-4}$ (+6.1 sigma). Under identical conditions RANDU, MINSTD, MT19937, RANNUM and R250 are unbiased. The mechanism is not yet identified.",
+   "evidence": "7 RANDM universes: z_e = -2.69, -3.08, -3.10, -0.06, -1.15, -3.13, -2.09 (between-universe chi2 = 8.4/6); combined $\\Delta C = +4.1\\times10^{-3}$ (+3.4 sigma). The 257-draw run has four disjoint period segments at z = +3.1, +3.4, +3.5, +2.0. RANDU over 4 universes: -1.66 sigma; MINSTD: -0.65 sigma. Both RANDU and RANDM satisfy the exact relation $x_n - 4x_{n+256} + 6x_{n+512} - 4x_{n+768} + x_{n+1024} \\equiv 0 \\pmod{2^{31}}$, because $a^{256}-1$ has 2-adic valuation 10. That relation therefore cannot by itself explain why only RANDM is biased. RANDM's 2D spectral value at lag 256 is $\\nu_2 = 730$ (RANDU 42527), yet the pair correlations of the Metropolis acceptance outcomes at lags 1, 2, 16, 255, 256, 257, 512 are all below 1.5 sd, and no relation with |h| <= 25 exists among the sweep-adjacent lags.",
+   "generators": [
+    "RANDM",
+    "RANDU",
+    "MINSTD"
+   ],
+   "figure": "ising_headline.png",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F14",
+   "claim": "Wolff cluster updates driven by RANDU, RANDM, MINSTD and RAND are unbiased at $10^7$ clusters, even though RANDU and RANDM cycle through their period 4.4 times and RANDU has a 21-sigma three-point lattice correlation at lags (1,2).",
+   "evidence": "z_e / z_C: RANDU +0.2/-1.3, RANDM -1.0/+0.3, MINSTD +0.6/+0.5, RAND +0.3/0.0. About 238 draws per cluster, so $2.4\\times10^9$ draws (1.1 MINSTD periods). RANDU $\\kappa_3(1,2) = 3.5\\times10^{-4}$, compared with R250's 0.071.",
+   "generators": [
+    "RANDU",
+    "RANDM",
+    "MINSTD",
+    "RAND"
+   ],
+   "figure": "ising_headline.png",
+   "category": "null_result",
+   "is_anomaly": false
+  },
+  {
+   "id": "ising-F15",
+   "claim": "RAND's truncation to multiples of $2^{-22}$ has no measurable effect on either algorithm. RAND tracks MINSTD from the same seed, and its acceptance thresholds are shifted by at most $2.4\\times10^{-7}$.",
+   "evidence": "Wolff RAND $\\Delta C = (-0.01 \\pm 1.27)\\times10^{-3}$, MINSTD $(+0.59 \\pm 1.27)\\times10^{-3}$. Metropolis RAND and MINSTD (same seed, $4\\times10^6$ sweeps) give e = 1.452417 and 1.452418, i.e. the same trajectory; these are therefore not independent tests.",
+   "generators": [
+    "RAND",
+    "MINSTD"
+   ],
+   "figure": "ising_headline.png",
+   "category": "precision_artifact",
+   "is_anomaly": false
+  },
+  {
+   "id": "ising-F16",
+   "claim": "The negative controls fail, but not in the same way for both algorithms. The logistic map gives a Metropolis energy 6.4% too low (-107 sigma), yet in Wolff its energy is correct and only C is off, by -11.8 sigma. Middle-square fails catastrophically in both.",
+   "evidence": "LOGISTIC Metropolis ($2\\times10^5$ sweeps): $\\Delta e = -0.0937 \\pm 0.0009$. Its lag-1 accept/reject outcomes are strongly correlated (P(A|A) = 0.50, P(A|R) = 0.71, ideal 0.586), and $\\kappa_3(1,2) = -0.0165$. LOGISTIC Wolff ($2\\times10^6$): $\\Delta e = +0.8\\times10^{-4} \\pm 2.0\\times10^{-4}$, $\\Delta C = -0.0236 \\pm 0.0020$. MIDSQ seed 12345678 falls into a 100-cycle after 10352 steps: Wolff $\\Delta e = +0.032$ (+82 sigma), $\\Delta C = -1.02$ (-507 sigma); Metropolis freezes into an exactly periodic orbit (e = 1.2825, zero variance). MIDSQ from seed 777 collapses to 0 after 3 steps.",
+   "generators": [
+    "LOGISTIC",
+    "MIDSQ"
+   ],
+   "figure": "",
+   "category": "generator_flaw",
+   "is_anomaly": true
+  },
+  {
+   "id": "ising-F17",
+   "claim": "Ziff's four-tap generator (471, 1586, 6988, 9689) is consistent with the exact values when both seeds are combined, but the two seeds disagree with each other in C by 3.1 sigma. This should be treated as an unresolved caution, not as evidence of a bias.",
+   "evidence": "Seed 777: $\\Delta C = -0.0051 \\pm 0.0020$ (-2.5 sigma); seed 24680: +0.0038 +- 0.0020 (+1.9 sigma). Combined: $\\Delta C = -0.0006 \\pm 0.0014$ (-0.4 sigma), $\\Delta e = -2.5\\times10^{-4} \\pm 1.5\\times10^{-4}$ (-1.7 sigma). Generator level: $\\kappa_3(471,9689)$ = 1.4e-5 +- 2.7e-5.",
+   "generators": [],
+   "figure": "ising_remedies.png",
+   "category": "test_property",
+   "is_anomaly": false
+  }
+ ],
+ "figures": [
+  {
+   "file": "ising_headline.png",
+   "caption": "Measured minus exact energy per spin (left, in units of $10^{-3}$) and specific heat (right) for the 16x16 Ising model at $K_c$, per generator, for Wolff cluster updates (filled circles) and Metropolis sweeps (open squares), with $\\pm1\\sigma$ error bars. Only R250 under Wolff is far off (+17 sigma in e, -47 sigma in C), while the same R250 is exact under Metropolis. RANDM under Metropolis is off by -6 sigma; its error bars use independent generator periods only."
+  },
+  {
+   "file": "ising_hidden_error_growth.png",
+   "caption": "Running estimates of e and C versus the number of Wolff clusters for R250 and MT19937. The gray band is the $\\pm2\\sigma$ range expected for an unbiased run. The R250 energy stays inside the band until about $10^5$ clusters and then levels off at a fixed offset, so the error is invisible in short runs."
+  },
+  {
+   "file": "ising_mechanism.png",
+   "caption": "Top: probability that a Wolff bond test is accepted, given the outcomes (R = rejected, A = accepted) of the tests $p$ and $q$ draws earlier. The dashed line is the ideal $p_{add} = 2-\\sqrt2$, and $\\kappa_3$ is the connected third cumulant of the accept/reject outcomes. R250 accepts with certainty after two rejections; summing two R250 streams keeps a weaker version of the same pattern; the additive lagged Fibonacci generator inverts it. Bottom: fraction of draws whose partner $\\ell$ draws back lies in the same Wolff cluster (0.24 at $\\ell$ = 250), and the draw-weighted distribution of draws per cluster (at most 2N+1 = 513)."
+  },
+  {
+   "file": "ising_remedies.png",
+   "caption": "Wolff bias for R250 variants (dots, $\\pm1\\sigma$) compared with the prediction that the bias scales with $\\kappa_3$ at lags (103, 250) (open diamonds). The shaded rows (decimation by 2 or 4, XOR of two R250 streams) obey the same trinomial recurrence and keep the full bias. Decimation by 3 or 5, XOR with MT19937 and Ziff's four-tap register are unbiased. The sum mod $2^{32}$ of two streams keeps 38% of the bias, and the additive lagged Fibonacci generator reverses its sign."
+  },
+  {
+   "file": "ising_lag_scan.png",
+   "caption": "Wolff bias in e and C for two-tap XOR shift registers GFSR(p, q) versus register length q, with R250 highlighted. The dashed curve is an exponential fit for $q \\ge 250$ with decay length $q_0 \\approx 265$ draws, about one cluster update. The dotted line marks the largest possible draw count of one cluster on 16x16, so the 12-sigma bias at q = 521 comes from correlations between successive clusters."
+  },
+  {
+   "file": "ising_size_coupling.png",
+   "caption": "Relative error of the Wolff specific heat for R250 and MT19937 versus lattice size at $K_c$ (left) and versus coupling at L = 16 (right). The R250 error is small at L = 8, where a cluster uses only 70 draws, saturates near -3.5% for L >= 16, and is also present away from $K_c$."
+  },
+  {
+   "file": "ising_metropolis_periodicity.png",
+   "caption": "Batch-mean energy of batch b versus batch b + 128 (one generator period, $2^{29}$ draws, later) for Metropolis sweeps. With MT19937 the points form an uncorrelated cloud. With RANDU and RANDM every pair is identical, because the chain becomes exactly periodic after one period, so later periods add no independent data."
+  }
+ ],
+ "tables": [
+  {
+   "title": "Wolff and Metropolis results, L = 16, K = K_c, seed 777 (exact e = 1.4530648528, C = 1.4987049594)",
+   "markdown": "| Generator | Algorithm | updates | $e-e_{ex}$ ($10^{-4}$) | $z_e$ | $C-C_{ex}$ ($10^{-3}$) | $z_C$ |\n|---|---|---|---|---|---|---|\n| MT19937 | Wolff | 1e7 | -1.09 $\\pm$ 1.24 | -0.9 | -0.94 $\\pm$ 1.24 | -0.8 |\n| MT19937 | Metropolis | 1e7 | -0.51 $\\pm$ 1.92 | -0.3 | +1.80 $\\pm$ 1.51 | +1.2 |\n| RANNUM | Wolff | 1e7 | -1.88 $\\pm$ 1.24 | -1.5 | +2.99 $\\pm$ 1.25 | +2.4 |\n| RANNUM | Metropolis | 1e7 | -1.20 $\\pm$ 1.89 | -0.6 | +1.47 $\\pm$ 1.47 | +1.0 |\n| R250 | Wolff | 1e7 | +19.68 $\\pm$ 1.19 | +16.5 | -52.16 $\\pm$ 1.12 | -46.7 |\n| R250 | Metropolis | 1e7 | +0.27 $\\pm$ 1.88 | +0.1 | +0.57 $\\pm$ 1.47 | +0.4 |\n| MINSTD | Wolff | 1e7 | +0.73 $\\pm$ 1.22 | +0.6 | +0.59 $\\pm$ 1.27 | +0.5 |\n| MINSTD | Metropolis | 4e6 + 3 x 2^21 | -1.18 $\\pm$ 1.81 | -0.6 | -1.19 $\\pm$ 1.47 | -0.8 |\n| RAND | Wolff | 1e7 | +0.41 $\\pm$ 1.21 | +0.3 | -0.01 $\\pm$ 1.27 | 0.0 |\n| RAND | Metropolis | 4e6 | -6.48 $\\pm$ 2.91 | -2.2 | +3.64 $\\pm$ 2.42 | +1.5 |\n| RANDU | Wolff | 1e7 | +0.28 $\\pm$ 1.22 | +0.2 | -1.64 $\\pm$ 1.25 | -1.3 |\n| RANDU | Metropolis | 4 x 2^21 | -3.54 $\\pm$ 2.13 | -1.7 | +2.27 $\\pm$ 1.73 | +1.3 |\n| RANDM | Wolff | 1e7 | -1.27 $\\pm$ 1.27 | -1.0 | +0.43 $\\pm$ 1.29 | +0.3 |\n| RANDM | Metropolis | 7 x 2^21 | -8.81 $\\pm$ 1.52 | -5.8 | +4.07 $\\pm$ 1.21 | +3.4 |\n| RANDM | Metropolis, 257 draws/sweep | 8e6 | +12.9 $\\pm$ 2.1 | +6.1 | -4.36 $\\pm$ 1.74 | -2.5 |\n| LOGISTIC | Wolff | 2e6 | +0.78 $\\pm$ 2.02 | +0.4 | -23.60 $\\pm$ 1.99 | -11.8 |\n| LOGISTIC | Metropolis | 2e5 | -937.1 $\\pm$ 8.7 | -107.4 | -23.73 $\\pm$ 6.09 | -3.9 |\n| MIDSQ (seed 12345678) | Wolff | 2e5 | +321.1 $\\pm$ 3.9 | +82.1 | -1016.4 $\\pm$ 2.0 | -506.6 |"
+  },
+  {
+   "title": "R250 variants under Wolff (L = 16, K_c): generator correlation and measured bias",
+   "markdown": "| Variant | recurrence of bits | $\\kappa_3(103,250)$ | clusters | $\\Delta e$ ($10^{-4}$) | $\\Delta C$ ($10^{-3}$) | $z_C$ | $\\Delta C_{pred}$ ($10^{-3}$) |\n|---|---|---|---|---|---|---|---|\n| R250 | taps (103,250) | +0.0711 | 1e7 | +19.7 $\\pm$ 1.2 | -52.2 $\\pm$ 1.1 | -46.7 | reference |\n| decimated by 2 | (103,250) | +0.0711 | 2e6 | +20.2 $\\pm$ 2.7 | -52.4 $\\pm$ 2.5 | -21.3 | -52.1 |\n| decimated by 4 | (103,250) | +0.0711 | 2e6 | +17.7 $\\pm$ 2.6 | -52.1 $\\pm$ 2.4 | -21.6 | -52.2 |\n| XOR of two R250 | (103,250) | +0.0711 | 2e6 | +15.9 $\\pm$ 2.6 | -53.2 $\\pm$ 2.8 | -18.9 | -52.2 |\n| time-reversed taps | (147,250) | n/a | 2e6 | +13.6 $\\pm$ 2.8 | -42.1 $\\pm$ 2.6 | -16.4 | n/a |\n| sum of two R250 mod $2^{32}$ | nonlinear (carries) | +0.0264 | 2e6 | +5.9 $\\pm$ 2.8 | -20.1 $\\pm$ 2.5 | -8.2 | -19.4 |\n| additive LFG(103,250) | $x_n = x_{n-103}+x_{n-250}$ mod $2^{32}$ | -0.0147 | 8e6 | -1.5 $\\pm$ 1.4 | +6.1 $\\pm$ 1.4 | +4.5 | +10.8 |\n| decimated by 3 | (103,152,201,250) | 0.0000 | 4e6 | -1.4 $\\pm$ 2.0 | +0.9 $\\pm$ 2.1 | +0.4 | 0 |\n| decimated by 5 | (50,103,200,250) | 0 (theory) | 4e6 | -2.2 $\\pm$ 2.0 | +1.5 $\\pm$ 1.9 | +0.8 | 0 |\n| R250 XOR MT19937 | none | 0.0000 | 4e6 | +1.8 $\\pm$ 2.1 | +1.5 $\\pm$ 2.1 | +0.7 | 0 |\n| Ziff four-tap | (471,1586,6988,9689) | 0 (theory) | 8e6 | -2.5 $\\pm$ 1.5 | -0.6 $\\pm$ 1.4 | -0.4 | 0 |"
+  },
+  {
+   "title": "Register-length scan, two-tap XOR GFSR(p,q), Wolff L = 16, K_c (fit for q >= 250: A = -0.134 +- 0.009, q0 = 265 +- 16 draws, chi2 = 1.6/4)",
+   "markdown": "| (p, q) | clusters | $\\Delta e$ ($10^{-4}$) | $z_e$ | $\\Delta C$ ($10^{-3}$) | $z_C$ | fit ($10^{-3}$) |\n|---|---|---|---|---|---|---|\n| (38, 89) | 2e6 | +42.5 $\\pm$ 2.4 | +17.4 | -96.5 $\\pm$ 2.4 | -40.9 | -95.7 (extrapolated) |\n| (63, 127) | 2e6 | +23.3 $\\pm$ 2.6 | +8.8 | -64.6 $\\pm$ 2.2 | -29.5 | -82.9 (extrapolated) |\n| (103, 250) | 1e7 | +19.7 $\\pm$ 1.2 | +16.5 | -52.2 $\\pm$ 1.1 | -46.7 | -52.1 |\n| (168, 521) | 6e6 | +4.6 $\\pm$ 1.6 | +2.9 | -18.2 $\\pm$ 1.5 | -12.1 | -18.7 |\n| (273, 607) | 6e6 | +7.4 $\\pm$ 1.6 | +4.7 | -13.8 $\\pm$ 1.6 | -8.8 | -13.5 |\n| (418, 1279) | 6e6 | +0.4 $\\pm$ 1.6 | +0.3 | -2.6 $\\pm$ 1.6 | -1.6 | -1.1 |\n| (1029, 2281) | 6e6 | +0.4 $\\pm$ 1.7 | +0.2 | +0.4 $\\pm$ 1.6 | +0.3 | 0.0 |\n| (4187, 9689) | 6e6 | -1.5 $\\pm$ 1.7 | -0.9 | -1.1 $\\pm$ 1.6 | -0.7 | 0.0 |"
+  },
+  {
+   "title": "Metropolis with period-2^29 generators: naive versus honest significance",
+   "markdown": "| Generator | data | identical (b, b+128) batch pairs | $z_e$ naive (all batches) | $z_e$ honest | $z_C$ naive | $z_C$ honest |\n|---|---|---|---|---|---|---|\n| RANDU | seed 777, 610 batches of 16384 sweeps (4.77 periods) | 482 / 482 | -3.02 | -1.37 (first period) | +2.30 | +1.03 |\n| RANDM | seed 777, 610 batches of 16384 sweeps | 482 / 482 | -6.08 | -2.69 (first period) | +2.30 | +1.05 |\n| RANDU | 4 seeds x one period | n/a | n/a | -1.66 (combined) | n/a | +1.31 |\n| RANDM | 7 seeds x one period | n/a | n/a | -5.78 (combined) | n/a | +3.37 |\n| MT19937 | 1000 batches of 1e4 sweeps | 0 / 872 | -0.26 | -0.26 | +1.19 | +1.19 |"
+  },
+  {
+   "title": "Exact Kaufman values at K_c on the L x L torus",
+   "markdown": "| L | e | C |\n|---|---|---|\n| 4 | 1.565623787638319 | 0.7832668259289094 |\n| 8 | 1.491589107439707 | 1.145559239894409 |\n| 16 | 1.453064852813477 | 1.498704959400026 |\n| 24 | 1.440133496057339 | 1.702733687723267 |\n| 32 | 1.433658466146248 | 1.846767590039559 |\n| 48 | 1.427179179385524 | 2.049055015106959 |\n| 64 | 1.423938389833011 | 2.192211393140571 |\n| infinite | $\\sqrt2$ = 1.414213562373095 | diverges |"
+  }
+ ],
+ "code_files": [
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/ising.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/ising_diag.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/coalesce.f90",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/exact.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/exact_K.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/analyze.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/collect.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/polycheck.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/spectral2d.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/small_relations.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/lag_pairs.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/period_check.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/universes.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_headline.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_growth.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_mechanism.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_remedies.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_lagscan.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_size_temp.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/fig_periodicity.py",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/runjob.sh",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/runs.txt",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/runs23.txt",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/results.csv",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/headline_table.csv",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/exact_Kc.txt",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/exact_K.txt",
+  "/Users/noah/Downloads/ComputationalPhysicsPHYS25000/Project1/P1_Claude/tests/ising/scratch/check_triples.txt"
+ ],
+ "caveats": [
+  "Compute budget exceeded: about 22 minutes of simulation CPU, about 2 minutes of generator checks, and 4.5 minutes wasted on a first coalescence test. That test started from all-up and all-down states, which stay exact mirror images forever under the global spin-flip symmetry; it was redone from random starts (0.2 s). Total is roughly 29 minutes against the 25-minute target.",
+  "The mechanism of the RANDM Metropolis bias (-5.8 sigma at 256 draws per sweep, +6.1 sigma at 257) is not identified. The exact lag-256 five-term relation is shared with RANDU, which is not significantly biased. The 2D spectral defect at lag 256 ($\\nu_2$ = 730) shows no measurable pair correlation in the acceptance outcomes. Tests of higher-order correlations among the sweep-adjacent lags, or a run at L = 15 or 17, were planned but not run.",
+  "The linear model (bias proportional to $\\kappa_3$) is heuristic. It works for the XOR and sum-of-streams variants but overestimates the additive lagged Fibonacci bias by a factor 1.8 (3.4 sigma), because the shape of its conditional-acceptance pattern differs from R250's.",
+  "The exponential lag-scan fit is empirical. Its decay length (1.1 cluster updates) is shorter than the energy autocorrelation time (about 3.0 clusters), and I have no first-principles derivation. The p/q ratio also matters: (63,127) lies below the fit and (147,250) shows a 20% smaller bias than (103,250).",
+  "The good-generator pulls are mildly over-dispersed (rms 1.35 over 24 values, p = 0.008). The binning check is clean, so this is probably chance plus the e-C anticorrelation of a single run, but a conservative reading inflates all sigma by 1.35. No headline conclusion changes.",
+  "Ziff four-tap: the two seeds disagree in C by 3.1 sigma. Combined they are unbiased, but more seeds would be needed to rule out a small effect.",
+  "The coupling-dependence runs (K = 0.40, 0.50) use only $5\\times10^5$ clusters. The energy at K = 0.40 is inconclusive because MT itself is +2.6 sigma there; only the specific heat result is robust. L = 64 uses $6\\times10^5$ (R250) and $3\\times10^5$ (MT) clusters.",
+  "The error bars for Wolff runs with RANDU and RANDM (4.4 periods) and MINSTD and RAND (1.1 periods) assume the data from different periods are independent. No duplicated batches were found, but independence is not proven.",
+  "The LOGISTIC Wolff run has a batch-means $\\tau$ (1.37) well below the autocorrelation $\\tau$ (2.43), suggesting long-range anticorrelation, possibly from a floating-point cycle of the map; its error bar may be inaccurate. The cycle length of the double-precision logistic orbit was not measured.",
+  "The error estimates for T(p,q) and $\\kappa_3$ treat triples as independent, although overlapping triples share variables. The R250 value T = 0.017867 versus the theoretical 1/56 should be read as agreement, not as a 3-sigma deviation.",
+  "Not done: Swendsen-Wang or heat-bath comparisons, 3D Ising, an exact enumeration of the detailed-balance violation for small clusters, and RANDM Metropolis on a lattice whose N is not a power of two."
+ ],
+ "rnglib_issues": [
+  "No bugs found. My own GFSR implementation with the same seeding reproduced rnglib's R250 bit for bit over $10^7$ words, and the Wolff run driven by it reproduced the rnglib run batch for batch.",
+  "Documentation note: rnglib's R250 uses the recurrence $x_n = x_{n-103} \\oplus x_{n-250}$. The time-reversed convention $x_n = x_{n-147} \\oplus x_{n-250}$ also appears in public R250 codes; it is a different sequence, and in this test its Wolff bias is about 20% smaller ($\\Delta C$ = -0.042 vs -0.052). Anyone comparing with other R250 implementations should state which convention they use.",
+  "Generator states are global module variables, so rnglib cannot provide two independent streams of the same generator (needed for XOR or sum combinations). I reimplemented the shift register inside tests/ising/ising.f90 for those variants.",
+  "MIDSQ seeded with the student's default seed 777 collapses to the absorbing state 0 after 3 steps (777 -> 60 -> 0). With seed 12345678 it enters a 100-cycle after 10352 steps. This is expected for a negative control but worth stating in the report."
+ ],
+ "references": [
+  "A. M. Ferrenberg, D. P. Landau and Y. J. Wong, Monte Carlo simulations: Hidden errors from 'good' random number generators, Phys. Rev. Lett. 69, 3382 (1992).",
+  "B. Kaufman, Crystal statistics. II. Partition function evaluated by spinor analysis, Phys. Rev. 76, 1232 (1949).",
+  "A. E. Ferdinand and M. E. Fisher, Bounded and inhomogeneous Ising models. I. Specific-heat anomaly of a finite lattice, Phys. Rev. 185, 832 (1969).",
+  "U. Wolff, Collective Monte Carlo updating for spin systems, Phys. Rev. Lett. 62, 361 (1989).",
+  "N. Metropolis, A. W. Rosenbluth, M. N. Rosenbluth, A. H. Teller and E. Teller, Equation of state calculations by fast computing machines, J. Chem. Phys. 21, 1087 (1953).",
+  "S. Kirkpatrick and E. P. Stoll, A very fast shift-register sequence random number generator, J. Comput. Phys. 40, 517 (1981).",
+  "R. M. Ziff, Four-tap shift-register-sequence random-number generators, Computers in Physics 12, 385 (1998).",
+  "L. N. Shchur and H. W. J. Bloete, Cluster Monte Carlo: Scaling of systematic errors in the two-dimensional Ising model, Phys. Rev. E 55, R4905 (1997).",
+  "P. D. Coddington, Analysis of random number generators using Monte Carlo simulation, Int. J. Mod. Phys. C 5, 547 (1994).",
+  "A. Heuer, B. Duenweg and A. M. Ferrenberg, Considerations on correlations in shift-register pseudorandom number generators and their removal, Comput. Phys. Commun. 103, 1 (1997).",
+  "S. K. Park and K. W. Miller, Random number generators: Good ones are hard to find, Commun. ACM 31, 1192 (1988).",
+  "M. Matsumoto and T. Nishimura, Mersenne Twister: A 623-dimensionally equidistributed uniform pseudo-random number generator, ACM Trans. Model. Comput. Simul. 8, 3 (1998).",
+  "J. L. Massey, Shift-register synthesis and BCH decoding, IEEE Trans. Inf. Theory 15, 122 (1969).",
+  "M. O. Rabin, Probabilistic algorithms in finite fields, SIAM J. Comput. 9, 273 (1980).",
+  "D. E. Knuth, The Art of Computer Programming, Vol. 2: Seminumerical Algorithms, 3rd ed. (Addison-Wesley, 1997), Sec. 3.3.4 (spectral test).",
+  "A. D. Sokal, Monte Carlo methods in statistical mechanics: foundations and new algorithms, in Functional Integration (Cargese 1996), NATO ASI Series B 361 (Plenum, 1997), pp. 131-192.",
+  "J. G. Propp and D. B. Wilson, Exact sampling with coupled Markov chains and applications to statistical mechanics, Random Struct. Algorithms 9, 223 (1996)."
+ ]
+}

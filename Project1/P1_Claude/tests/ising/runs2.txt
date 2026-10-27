@@ -1,0 +1,21 @@
+D_L64_r250|alg='wolff' src=5 L=64 ntherm=2000 nmeas=600000 nbatch=200
+D_L32_r250|alg='wolff' src=5 L=32 nmeas=2000000 nbatch=200
+D_L64_mt|alg='wolff' src=7 L=64 ntherm=2000 nmeas=300000 nbatch=100
+D_L32_mt|alg='wolff' src=7 L=32 nmeas=1000000 nbatch=100
+D_L8_r250|alg='wolff' src=5 L=8 nmeas=4000000 nbatch=400
+D_L8_mt|alg='wolff' src=7 L=8 nmeas=4000000 nbatch=400
+F_fifo_r250|alg='wolff' order='fifo' src=5 nmeas=2000000 nbatch=200
+F_fifo_mt|alg='wolff' order='fifo' src=7 nmeas=2000000 nbatch=200
+G_mr_r250|alg='mrand' src=5 ntherm=10000 nmeas=2000000 nbatch=200
+G_mr_mt|alg='mrand' src=7 ntherm=10000 nmeas=2000000 nbatch=200
+E_s1_r250|alg='wolff' src=5 seed=1 nmeas=1000000 nbatch=100
+E_s65536_r250|alg='wolff' src=5 seed=65536 nmeas=1000000 nbatch=100
+E_s314159_r250|alg='wolff' src=5 seed=314159 nmeas=1000000 nbatch=100
+H_K040_r250|alg='wolff' src=5 K=0.40 nmeas=500000 nbatch=100
+H_K040_mt|alg='wolff' src=7 K=0.40 nmeas=500000 nbatch=100
+H_K050_r250|alg='wolff' src=5 K=0.50 nmeas=500000 nbatch=100
+H_K050_mt|alg='wolff' src=7 K=0.50 nmeas=500000 nbatch=100
+A_w_logis|alg='wolff' src=9 nmeas=200000 nbatch=100
+A_w_midsq|alg='wolff' src=8 seed=12345678 nmeas=200000 nbatch=100
+B_m_logis|alg='metro' src=9 ntherm=10000 nmeas=200000 nbatch=100
+B_m_midsq|alg='metro' src=8 seed=12345678 ntherm=10000 nmeas=200000 nbatch=100

@@ -1,0 +1,4 @@
+MT_s778 7 778 0 plan_check.txt
+MT_s12345 7 12345 0 plan_check.txt
+RANNUM_s778 6 778 0 plan_check.txt
+RANNUM_s12345 6 12345 0 plan_check.txt

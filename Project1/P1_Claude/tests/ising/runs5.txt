@@ -1,0 +1,2 @@
+C_logis2|alg='wolff' src=9 seed=777 nmeas=2000000 nbatch=200
+D_L32_mt_s2|alg='wolff' src=7 L=32 seed=24680 nmeas=1000000 nbatch=100

@@ -1,0 +1,5 @@
+# RANNUM   seed          777 d  3 mode  1 Nt     10000000 cpu     0.76
+# k  ncells  sum_n2  nempty  maxcount
+    32       32768          3061798456           0         372
+    64      262144           391439776           0          69
+   100     1000000           109971892          42          29

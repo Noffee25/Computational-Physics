@@ -1,0 +1,14 @@
+CELLS_DONE
+KNUTH_DONE
+TRIPLES_DONE
+RANDU    secondlevel cpu     3.40
+RANDM    secondlevel cpu     3.10
+RAND     secondlevel cpu     9.33
+MINSTD   secondlevel cpu     4.18
+R250     secondlevel cpu     3.40
+RANNUM   secondlevel cpu     6.72
+MT19937  secondlevel cpu     8.51
+MIDSQ    secondlevel cpu     3.86
+LOGISTIC secondlevel cpu    10.32
+SL_DONE
+DEEP_DONE
