@@ -88,13 +88,14 @@
       DO WHILE (.true.)
 
       CALL SLEEP(1)
-      neighborcount = 0
+      
 
       DO 64 I=1,N
             DO 71 J=1,N
 
 ! Now make if statements for a given I,J pair
 ! First, we can make temp variable named neighbor and check number of neighbors
+                  neighborcount = 0
 !                 LHS Check
                   IF (J.GT.1) THEN
                         neighborcount = neighborcount + STATUS(I,J-1)
@@ -124,22 +125,24 @@
                   ENDIF
 
 
-! Then we check if the status is dead or alive
-! Determine what to do based off of this
-                  NEXT(I,J) = STATUS(I,J)
+! Now we can directly implement the rules:
 
-                  IF ( (STATUS(I,J)=1).AND.(neighborcount=3) ) THEN
-                        NEXT(I,J)=0
+                  IF ( (STATUS(I,J)==0).AND.(neighborcount==3) ) THEN
+                        NEXT(I,J)= 1
                   ENDIF
 
-            
-            STATUS(I,J)=0.
-            NEXT(I,J)=0.
-
+                  IF ( (STATUS(I,J) == 1).AND.(neighborcount.LE.1).OR.(STATUS(I,J) == 1).AND.(neighborcount.GE.4) ) THEN
+                        NEXT(I,J) = 0
+                  ELSE IF ( (STATUS(I,J) == 1).AND.(neighborcount == 2).OR.(STATUS(I,J) == 1).AND.(neighborcount == 3) ) THEN
+                        NEXT(I,J) = 1
+                  ENDIF
 
 
       71    CONTINUE
       64 CONTINUE
+      STATUS = NEXT
+      WRITE(*,*) !Empty line to separate each grid
+      CALL DISPLAY(STATUS,N)
 
       END DO
       
