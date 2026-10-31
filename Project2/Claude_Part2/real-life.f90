@@ -3,10 +3,11 @@
 !
 !                    "In the beginning there was B3/S23."
 !
-!  The toric board, taken literally: the board is a doughnut-shaped
-!  planet.  x runs around the ring, y around the tube, and both wrap.  Its
-!  sunlight comes from the geometry of a torus: a hot outer equator, polar
-!  days and nights, and a dim twilight belt in the shadow of the ring.
+!  The bounded board, taken literally: the board is a flat world with an
+!  edge.  x runs west to east, y south to north, and nothing wraps; at the
+!  edge of the board the sea pours off the world into the starry dark.
+!  Each row is a latitude: a hot equator across the middle of the map,
+!  temperate lands either side, and polar ice along the top and bottom.
 !
 !  On it live the peoples of Life.  Every living cell carries its own B/S
 !  rule as a genome.  B3/S23 is only the ancestor, the Conwayans, and
@@ -72,14 +73,20 @@
 !     sanction aggressors.  Grain from abroad feeds the cells of poor lands,
 !     famine starves them, and caravans carry settlers down the trade roads.
 !
-!  Watching it: the continents keep to the sunlit belt of the planet, so the
-!  map is a still atlas with the sea all round.  Each realm is washed in its
-!  colours with its borders drawn (red where it is at war); names, arms,
-!  caravans on the trade roads, battles and famines are marked on the map,
-!  and great events are announced.  At 1x a year passes in eight seconds.
+!  Watching it: the map is a still atlas of one world, with the sea all
+!  round and the World's Edge beyond it; pan toward an edge and you look
+!  over the end of the world.  Each realm is washed in its colours, and each
+!  border is drawn in the colour of the two realms' dealings -- red and
+!  burning where they are at war, amber where they hate each other, white
+!  under a truce, gold between allies, teal between trading partners -- with
+!  a medallion on it to say so.  Wars are fought, and shown, at their fronts.
+!  Only the great events of the age are announced; the rest flare up on the
+!  map where they happen and go into the Chronicle.  At 1x a year passes in
+!  eight seconds.
 !
 !  build:  gfortran -O2 real-life.f90 -o real-life
 !  run:    ./real-life                    then open the address it prints
+!          ./real-life --size huge                  a bigger world (768 x 384)
 !          ./real-life --headless --years 400       the Book, without a browser
 !          ./real-life --lab ising|avalanche|fire|noise|vicsek
 !          ./real-life --help
@@ -96,11 +103,11 @@
 !  becomes the sliders), the random numbers, the event and command
 !  queues, the layout of a genome and a few small helpers.
 !
-!  The board: x (i = 1..NX) runs around the ring of a doughnut-shaped
-!  planet, y (j = 1..NY) around its tube, and both wrap.  Row NY/2 is the
-!  hot outer equator, rows NY/4 and 3NY/4 the poles (bottom and top of the
-!  tube), and rows 1 and NY meet at the inner equator, in the shadow of
-!  the ring.
+!  The board: x (i = 1..NX) runs west to east and y (j = 1..NY) south to
+!  north, and the board has hard edges: nothing wraps.  Each row is a
+!  latitude -- row 1 the south pole, row NY the north pole, the middle row
+!  the equator -- and a band RIMW cells wide all round is the World's Edge,
+!  open sea where nothing lives, beyond which the sea pours off the world.
 !=======================================================================
 module rl_core
    use, intrinsic :: iso_fortran_env, only: int8, int16, int32, int64, real32, real64, &
@@ -111,12 +118,13 @@ module rl_core
    integer, parameter :: sp = real32, dp = real64, i1 = int8, i2 = int16, i8 = int64
 
    ! ================================================================ the board
-   integer :: NX = 384, NY = 192
+   integer :: NX = 512, NY = 256
+   integer, parameter :: RIMW  = 6           ! the World's Edge: within RIMW cells of the edge of the
+                                             ! board lies open sea where nothing lives (inrim)
    integer, parameter :: TPY   = 64          ! ticks per year; one tick is one Life generation
    integer, parameter :: NSEAS = 32          ! season phases in the sunlight tables
    integer, parameter :: NHOUR = 96          ! hour angles in the day/night table
    real(dp), parameter :: PI = 3.141592653589793d0, TWOPI = 2*PI, DEG = PI/180
-   real(dp), parameter :: RR = 2d0           ! major/minor radius of the doughnut (R/r)
    real(dp), parameter :: CELL_KM = 60d0     ! nominal size of a cell (for prose only)
 
    ! ================================================================ the clock
@@ -131,9 +139,12 @@ module rl_core
    character(len=48) :: world_name = ''      ! given by rl_chronicle
    character(len=48) :: age_name = ''        ! the current Age, kept by rl_chronicle
 
-   ! ================================================================ neighbours on the torus
-   integer, allocatable :: ip(:), im(:)      ! i+1, i-1 wrapped into 1..NX
-   integer, allocatable :: jp(:), jm(:)      ! j+1, j-1 wrapped into 1..NY
+   ! ================================================================ neighbours on the board
+   ! The board has edges: the neighbour tables are clamped, so at an edge a cell is its own
+   ! neighbour on the outer side (every stencil built on them has a zero-flux edge).  Code that
+   ! stamps a shape or counts neighbours must not rely on that: test onmap() and skip.
+   integer, allocatable :: ip(:), im(:)      ! i+1, i-1 clamped into 1..NX
+   integer, allocatable :: jp(:), jm(:)      ! j+1, j-1 clamped into 1..NY
 
    ! ================================================================ terra   (owner: rl_terra)
    type region_t                             ! a named place of the gazetteer
@@ -198,7 +209,7 @@ module rl_core
       integer :: massbits = 0                ! landmasses 1..30 it has ever lived on (bit m-1)
       integer(i8) :: t_first = -1, t_last = -1, t_peak = -1, t_named = -1, t_fell = -1
       real(sp) :: hue = -1                   ! degrees, given when it becomes notable
-      real(sp) :: cx = 0, cy = 0             ! where it lives (circular-mean centre, cells)
+      real(sp) :: cx = 0, cy = 0             ! where it lives (mean position of its cells)
       real(sp) :: pig = 0, topt = 0, diet = 0  ! mean pigment 0..15, optimum degC, diet 0..7
    end type people_t
    integer, parameter :: PF_WANDER = 0, PF_SEAFARER = 1, PF_SCARRED = 2, PF_PLAGUED = 3, &
@@ -255,7 +266,7 @@ module rl_core
       character(len=16) :: rule = 'RL'       ! the turn taken on furrow state k (R, L, N, U)
       integer :: nr = 2                      ! length of the rule
       integer(i8) :: steps = 0, t_wake = -1, t_sleep = -1
-      integer :: ux = 0, uy = 0              ! unwrapped position (its true displacement)
+      integer :: ux = 0, uy = 0              ! displacement from where it woke (cells)
       integer :: road = 0                    ! 1 while it is laying a highway
       integer :: raised = 0                  ! causeway cells raised so far
       integer :: id = 0                      ! seed for its name
@@ -350,10 +361,10 @@ contains
       if (allocated(ip)) call core_free()
       allocate(ip(NX), im(NX), jp(NY), jm(NY))
       do i = 1, NX
-         ip(i) = modulo(i, NX) + 1;  im(i) = modulo(i - 2, NX) + 1
+         ip(i) = min(i + 1, NX);  im(i) = max(i - 1, 1)
       end do
       do j = 1, NY
-         jp(j) = modulo(j, NY) + 1;  jm(j) = modulo(j - 2, NY) + 1
+         jp(j) = min(j + 1, NY);  jm(j) = max(j - 1, 1)
       end do
       allocate(elev(NX,NY), land(NX,NY), mass(NX,NY), region(NX,NY), flow(NX,NY))
       allocate(insol(NY,0:NSEAS-1), daylit(NY,NHOUR,0:NSEAS-1), areaw(NY))
@@ -365,10 +376,7 @@ contains
       allocate(ppl(0:65535))
       allocate(sick(NX,NY), strain(NX,NY), awe(NX,NY), furrow(NX,NY))
       allocate(regs(0))
-      do j = 1, NY
-         areaw(j) = real(1 + cos(theta_of(j))/RR, sp)
-      end do
-      areaw = areaw/(sum(areaw)*NX)
+      areaw = real(1d0/(real(NX, dp)*NY), sp)  ! a flat map: every cell the same size
       call make_lambda()
       call core_clear()
    end subroutine core_alloc
@@ -403,37 +411,92 @@ contains
    end subroutine core_clear
 
    pure real(dp) function theta_of(j)
-      ! angle around the tube for row j: 0 outer equator, +-pi/2 poles, +-pi inner equator
+      ! latitude of row j, radians: -pi/2 at the south pole (row 1), 0 at the equator (the
+      ! middle row), +pi/2 at the north pole (row NY); antisymmetric about the middle row
       integer, intent(in) :: j
-      theta_of = TWOPI*(j - 0.5d0)/NY - PI
+      theta_of = PI*(j - 0.5d0)/NY - PI/2
    end function theta_of
 
    pure real(dp) function phi_of(i)
-      ! angle around the ring (longitude) for column i
+      ! longitude of column i, radians (for the hour angle of the sun and the weather waves)
       integer, intent(in) :: i
       phi_of = TWOPI*(i - 0.5d0)/NX
    end function phi_of
 
    pure integer function wrapi(i)
+      ! column i clamped onto the board (the board does not wrap; to drop cells beyond the
+      ! edge instead, test onmap)
       integer, intent(in) :: i
-      wrapi = modulo(i - 1, NX) + 1
+      wrapi = max(1, min(NX, i))
    end function wrapi
 
    pure integer function wrapj(j)
+      ! row j clamped onto the board
       integer, intent(in) :: j
-      wrapj = modulo(j - 1, NY) + 1
+      wrapj = max(1, min(NY, j))
    end function wrapj
 
    pure real(dp) function dxwrap(dx)
-      ! shortest signed x-distance on the torus
+      ! signed x-distance (the board does not wrap, so it is dx itself)
       real(dp), intent(in) :: dx
-      dxwrap = dx - NX*anint(dx/NX)
+      dxwrap = dx
    end function dxwrap
 
    pure real(dp) function dywrap(dy)
+      ! signed y-distance
       real(dp), intent(in) :: dy
-      dywrap = dy - NY*anint(dy/NY)
+      dywrap = dy
    end function dywrap
+
+   pure logical function onmap(i, j)
+      ! is (i,j) a cell of the board?
+      integer, intent(in) :: i, j
+      onmap = i >= 1 .and. i <= NX .and. j >= 1 .and. j <= NY
+   end function onmap
+
+   pure integer function edge_dist(i, j)
+      ! cells from (i,j) to the nearest edge of the board: 0 on the outermost ring, negative
+      ! beyond the edge
+      integer, intent(in) :: i, j
+      edge_dist = min(i - 1, NX - i, j - 1, NY - j)
+   end function edge_dist
+
+   pure logical function inrim(i, j)
+      ! is (i,j) in the World's Edge (or beyond it), where nothing lives or stands as land?
+      integer, intent(in) :: i, j
+      inrim = edge_dist(i, j) < RIMW
+   end function inrim
+
+   subroutine rim_sweep()
+      ! The World's Edge stays empty sea.  The modules keep to it themselves (nothing is born,
+      ! raised or sown in the rim); this is the backstop, run after the living move and after
+      ! the Hand's deeds, and it costs only the rim.  In the Conway limit the whole board is the
+      ! dish -- its edge is dead by the rules of Life -- so only the land is kept to.
+      integer :: i, j, w
+      w = min(RIMW, NX/2, NY/2)
+      do j = 1, NY
+         if (j > w .and. j <= NY - w) then
+            do i = 1, w
+               call clean(i, j)
+               call clean(NX + 1 - i, j)
+            end do
+         else
+            do i = 1, NX
+               call clean(i, j)
+            end do
+         end if
+      end do
+   contains
+      subroutine clean(a, b)
+         integer, intent(in) :: a, b
+         if (land(a,b) /= 0) then
+            land(a,b) = 0;  land_dirty = .true.
+         end if
+         if (elev(a,b) > -200) elev(a,b) = -200
+         fire(a,b) = 0;  seedg(a,b) = 0
+         if (.not. purist .and. alive(a,b) /= 0) doom(a,b) = 1
+      end subroutine clean
+   end subroutine rim_sweep
 
    pure integer function iseason()
       ! the season phase (0..NSEAS-1) of the sunlight tables now
@@ -1079,11 +1142,16 @@ module rl_soc
    real(sp), allocatable :: hostility(:,:)    ! per cell: xenophobia multiplier, 1 in peace, more
                                               ! along the front of a war (rl_polity; rl_life reads)
    integer(i1), allocatable :: front(:,:)     ! per cell: 1 on a war front (rl_render glows it)
+   integer(i1), allocatable :: tension(:,:)   ! per cell: 1 on a tense border, between realms at
+                                              ! peace that hate each other (rl_polity; rl_render)
+   real(sp), allocatable :: bheat(:,:)        ! per cell: recent bloodshed between realms, from
+                                              ! battles and border killings; decays (rl_polity sets,
+                                              ! rl_render shows it as embers)
    integer(i2), allocatable :: creed(:,:)     ! per live cell: the faith it holds, 0: none
    integer,  allocatable :: cowner(:,:)       ! per cell: realm of its region (for rebuilding)
 
    ! ================================================================ realms
-   integer, parameter :: MAXPOL = 48
+   integer, parameter :: MAXPOL = 96          ! (rl_polity keeps realm ids in int8 maps: at most 127)
    type polity_t
       integer :: state = 0                    ! 0 free slot, 1 standing, 2 fallen
       integer :: people = -1                  ! the people that founded it (rule)
@@ -1092,6 +1160,7 @@ module rl_soc
       integer :: nreg = 0, pop = 0            ! regions held, living cells in them
       integer :: faith = 0                    ! state religion (faith id), 0 none
       integer :: seed = 0                     ! for its name and its arms
+      integer :: nameix = 0                   ! its name, fixed when first spoken (rl_chronicle)
       integer :: ruler = 0                    ! seed of the present ruler's name
       integer :: regnal = 1                   ! regnal number of the ruler
       integer :: dynasty = 0                  ! seed of the ruling house
@@ -1189,9 +1258,10 @@ contains
 
    subroutine soc_alloc()
       ! per-cell society arrays (call after core_alloc)
-      if (allocated(hostility)) deallocate(hostility, front, creed, cowner)
-      allocate(hostility(NX,NY), front(NX,NY), creed(NX,NY), cowner(NX,NY))
-      hostility = 1;  front = 0;  creed = 0;  cowner = 0
+      if (allocated(hostility)) deallocate(hostility, front, tension, bheat, creed, cowner)
+      allocate(hostility(NX,NY), front(NX,NY), tension(NX,NY), bheat(NX,NY), creed(NX,NY), &
+               cowner(NX,NY))
+      hostility = 1;  front = 0;  tension = 0;  bheat = 0;  creed = 0;  cowner = 0
    end subroutine soc_alloc
 
    subroutine soc_clear()
@@ -1204,7 +1274,7 @@ contains
       phist = 0;  phist_tick = 0;  nphist = 0
       flows = flow_t();  nflow = 0
       if (.not. allocated(hostility)) call soc_alloc()
-      hostility = 1;  front = 0;  creed = 0;  cowner = 0
+      hostility = 1;  front = 0;  tension = 0;  bheat = 0;  creed = 0;  cowner = 0
       call soc_build(.false.)
    end subroutine soc_clear
 
@@ -1483,7 +1553,8 @@ contains
             do b = -rad, rad
                do a = -rad, rad
                   if (a*a + b*b > rad*rad) cycle
-                  i = wrapi(ci + a);  j = wrapj(cj + b)
+                  i = ci + a;  j = cj + b
+                  if (inrim(i, j)) cycle             ! off the board, or in the World's Edge
                   if (land(i,j) == 0 .or. urand() > 0.3d0) cycle
                   alive(i,j) = 1
                   gene(i,j) = g_make(ru, 4 + irnd(8), 18, merge(5, 0, k == np))
@@ -1500,10 +1571,11 @@ end module rl_soc
 !  rl_terra -- the planet: its ground, its landmasses and named places,
 !  the light of its sun, its rivers and the stars that fall on it
 !
-!  The ground is made the way a planet makes it, in caricature.  A dozen
-!  plates tile the torus (a warped, weighted Voronoi diagram), each with
-!  a motion of its own, and most carry a continent set toward their
-!  leading edge.  The continents are cut out of a Gaussian random field:
+!  The ground is made the way a planet makes it, in caricature.  Plates
+!  tile the board (a warped, weighted Voronoi diagram), a dozen to a world
+!  of 384 x 192 cells and more to a bigger one, each with a motion of its
+!  own, and most carry a continent set toward their leading edge.  The
+!  continents are cut out of a Gaussian random field:
 !  about 300 plane waves with integer wavevectors, so that it is exactly
 !  periodic, and amplitudes falling as |k|^-2, summed with separable sine
 !  and cosine tables as one matrix product.  Where two plates close, their
@@ -1515,16 +1587,14 @@ end module rl_soc
 !  margins and narrow on the active ones; hotspots leave chains of islands
 !  behind the moving plates; ridged noise gives the ranges their crests
 !  and domain warping the coasts their capes and bays.  The sea stands at
-!  the 55th percentile, and rain droplets carve the valleys.
+!  the 55th percentile, and rain droplets carve the valleys.  Round the
+!  edge of the world runs open sea, its coasts ragged, and the continents
+!  thin out toward the frozen poles.
 !
-!  The sunlight is that of a doughnut spinning about its axis: for every
-!  row and season, the daily mean of max(0, n.s) over the hour angle,
-!  where a ray toward the sun that meets the torus again lies in shadow.
-!  Under the ring the far side of the tube hides the sun, except when it
-!  stands high enough above or below the ring plane to peek over it.  The
-!  shadow test is exact: the surface point is one root of the ray-torus
-!  quartic, and the cubic that remains has a pair of positive roots
-!  exactly when its local minimum on t > 0 dips below zero.
+!  The sunlight is that of a globe spinning about its tilted axis.  The
+!  rows are latitudes, the south pole along the bottom of the map and the
+!  north pole along the top, and for every row and season the light is
+!  the daily mean of max(0, n.s) over the hour angle, in closed form.
 !
 !  Landmasses are the 8-connected pieces of land, numbered by size.  The
 !  gazetteer cuts land and sea into geodesic Voronoi regions about seeds
@@ -1557,9 +1627,13 @@ module rl_terra
    real(dp), parameter :: HCAP = 8000           ! the Hand raises no land higher, m
    real(dp), parameter :: DCAP = 7000           ! nor digs any sea deeper, m
    real(dp), parameter :: REFTILT = 23*DEG      ! the sun's strength is set at this tilt ...
-   real(dp), parameter :: QMEAN = 340           ! ... so that the yearly global mean is this
+   real(dp), parameter :: QMEAN = 330           ! ... so that the yearly mean over the board is this
    real(dp), parameter :: FILL_EPS = 1d-3       ! fall across a filled flat, m per cell
-   integer,  parameter :: NFINE = 256           ! hour angles per half day for the daily mean
+   real(dp), parameter :: REFNY = 192           ! the shapes of a new world are drawn to the scale of a
+                                                ! board this high and keep their size in cells, so
+                                                ! a bigger board holds more of them, not bigger ones
+   integer,  parameter :: SEAW = RIMW + 2       ! no new land this near the edge of the world, ...
+   real(dp), parameter :: SEARAMP = 14          ! ... and less of it over this many cells more
    integer,  parameter :: LANDREG = 700, SEAREG = 5000    ! cells per region of the gazetteer
    integer,  parameter :: MINLAND = 150, MINSEA = 750     ! the least land or sea with its own
    integer,  parameter :: NLLOYD = 3            ! relaxation sweeps of the region seeds
@@ -1572,7 +1646,7 @@ module rl_terra
    integer,  parameter :: CHAMF(8) = [5, 7, 5, 7, 5, 7, 5, 7]   ! steps of the geodesic metric
 
    type lattice_t                               ! one octave of periodic gradient noise
-      integer :: lx = 1, ly = 1                 ! lattice cells around the ring and the tube
+      integer :: lx = 1, ly = 1                 ! lattice cells across and down the board
       real(dp), allocatable :: gx(:,:), gy(:,:) ! unit gradients at the lattice points
    end type lattice_t
 
@@ -1628,8 +1702,9 @@ contains
          1000d0, 'Mean wait between natural star-falls, a Poisson process. Each digs a '// &
          'crater, veils the sky with dust and may wake a Titan.', logs=.true., ui=.true.)
       P_PLATES = reg_param('plates', 'Plates', 'Land', 12d0, 4d0, 30d0, &
-         'Tectonic plates of a new world. Most carry a continent; where they collide they '// &
-         'raise ranges and island arcs, where they part, ridges.', ui=.false.)
+         'Tectonic plates of a new world of 384 x 192 cells (a bigger world has more in '// &
+         'proportion). Most carry a continent; where they collide they raise ranges and '// &
+         'island arcs, where they part, ridges.', ui=.false.)
       P_HMAX   = reg_param('peaks', 'Highest peaks', 'Land', 4500d0, 1500d0, 8000d0, &
          'Height of the highest mountains of a new world, in metres.', ui=.false.)
       P_BETA   = reg_param('roughness', 'Spectral slope', 'Land', 2d0, 1.2d0, 3d0, &
@@ -1651,15 +1726,16 @@ contains
       P_CRATER = reg_param('craterdepth', 'Crater depth', 'Heavens', 900d0, 100d0, 3000d0, &
          'Depth in metres of the bowl that a falling star digs.', ui=.false.)
       P_SUNN   = reg_param('sunnorm', 'Sun follows the tilt', 'Heavens', 0d0, 0d0, 1d0, &
-         '0: a fixed sun, so a doughnut tilted further shows the sun more of its face and '// &
-         'catches more light; 1: the sun is rescaled so that the yearly mean stays 340 W/m2.', &
+         '0: a fixed sun, so a world tilted further warms its poles and catches more light '// &
+         'on the whole; 1: the sun is rescaled so that the yearly mean stays as it was born.', &
          ui=.false.)
       P_CJOIN  = reg_param('causewayjoin', 'Causeways join lands', 'Land', 0d0, 0d0, 1d0, &
          '1: a causeway makes two landmasses one; 0: each half belongs to its nearer shore.', &
          ui=.false.)
-      P_BELT   = reg_param('belt', 'Continents in the sunlit belt', 'Land', 1d0, 0d0, 1d0, &
-         '1: the continents keep to the sunlit outer half of the tube and clear of the '// &
-         'map''s edges, so the map reads like an atlas; 0: land anywhere on the torus.', ui=.false.)
+      P_BELT   = reg_param('belt', 'Continents clear of the poles', 'Land', 1d0, 0d0, 1d0, &
+         '1: the continents thin out toward the frozen poles, so the map reads like an '// &
+         'atlas; 0: land runs up to the polar seas. Either way the edge of the world is open sea.', &
+         ui=.false.)
       P_CWLIFE = reg_param('causewaylife', 'Causeway life', 'Titans', 25d0, 2d0, 1000d0, &
          'Mean years a Titan''s causeway stands before the sea takes it back.', logs=.true., &
          ui=.false.)
@@ -1722,7 +1798,8 @@ contains
          integer, parameter :: OI(8) = [1, -1, 0, 0, 2, -2, 0, 0], OJ(8) = [0, 0, 1, -1, 0, 0, 2, -2]
          d = 0;  n = 0
          do k = 1, 8
-            ii = wrapi(a + OI(k));  jj = wrapj(b + OJ(k))
+            ii = a + OI(k);  jj = b + OJ(k)
+            if (.not. onmap(ii, jj)) cycle
             if (land(ii,jj) == 0 .and. elev(ii,jj) < -30) then
                d = d + elev(ii,jj);  n = n + 1
             end if
@@ -1764,21 +1841,27 @@ contains
       ! the land, so its share is found by two trials
       real(dp), allocatable :: h(:,:)
       real(dp) :: want, cf
-      integer  :: pass
+      integer  :: pass, i, j
       call gen_alloc()
       allocate(h(NX,NY))
       call gen_noise()
       call gen_plates()
       want = 1 - pv(P_SEA)
       cf = min(0.97d0, want + 0.06d0)
-      do pass = 1, merge(4, 2, pv(P_BELT) > 0.5d0)
+      do pass = 1, merge(4, 3, pv(P_BELT) > 0.5d0)
          call gen_crust(cf)
          call gen_relief(h)
-         if (pv(P_BELT) > 0.5d0) call belt_mask(h)
+         call belt_mask(h)
          cf = min(0.97d0, max(0.02d0, cf + want - count(h > 0)/real(NX*NY, dp)))
       end do
       call gen_hotspots(h)
       call gen_finish(h)
+      ! whatever the hotspots and the sea level did, the edge of the world stays open sea
+      do j = 1, NY
+         do i = 1, NX
+            if (edge_dist(i,j) < SEAW) h(i,j) = min(h(i,j), -250d0 - 150d0*(SEAW - edge_dist(i,j)))
+         end do
+      end do
       elev = real(h, sp)
       where (elev > 0)
          land = 1
@@ -1789,17 +1872,28 @@ contains
    end subroutine make_ground
 
    subroutine belt_mask(h)
-      ! the continents keep to the sunlit outer half of the tube and clear of the left and
-      ! right edges of the map: beyond the belt the land sinks under a cold, deep sea
+      ! the open sea about the edge of the world: no land within SEAW cells of it and less
+      ! over the next SEARAMP, the ramp wandering inland so that no coast runs ruler-
+      ! straight; with the belt the continents also thin out toward the frozen poles, on
+      ! a ragged line between about 48 and 70 degrees, so that the land lies where life
+      ! can thrive.  Beyond, the land sinks under a cold, deep sea
       real(dp), intent(inout) :: h(:,:)
+      type(lattice_t) :: ln(2)
       integer  :: i, j
-      real(dp) :: my, mx, m, d
+      real(dp) :: n, my, me, m
+      logical  :: belt
+      belt = pv(P_BELT) > 0.5d0
+      call make_lattice(ln(1), 40d0, SALT_GRAD + 33)
+      call make_lattice(ln(2), 13d0, SALT_GRAD + 34)
       do j = 1, NY
-         my = 1 - smooth(62d0, 92d0, abs(theta_of(j))/DEG)
          do i = 1, NX
-            d = min(i - 0.5d0, NX - i + 0.5d0)/NX
-            mx = smooth(0.012d0, 0.08d0, d)
-            m = my*mx
+            n = 0.7d0*gnoise(ln(1), real(i, dp), real(j, dp)) &
+              + 0.3d0*gnoise(ln(2), real(i, dp), real(j, dp))
+            n = min(1d0, max(-1d0, n))
+            me = smooth(real(SEAW, dp), SEAW + SEARAMP, edge_dist(i,j) - 8*(1 + n))
+            my = 1
+            if (belt) my = 1 - smooth(48d0, 70d0, abs(theta_of(j))/DEG + 6*n)
+            m = my*me
             h(i,j) = m*h(i,j) - (1 - m)*1800
          end do
       end do
@@ -1810,28 +1904,28 @@ contains
       ! regions, belts of old ranges and the beads of island arcs
       type(lattice_t) :: lh(4), lr(5), lm(2), lb(2), lk(1)
       real(dp), allocatable :: ux(:,:), uy(:,:), f(:,:)
-      real(dp) :: x, y, wc, s0
+      real(dp) :: x, y, wc, q
       integer  :: i, j, o
-      s0 = NY/192d0
+      q = NY/REFNY                                  ! waves per board height, for a fixed size
       allocate(ux(NX,NY), uy(NX,NY), f(NX,NY))
-      call spectral(xw, 4d0, 1d0, 2d0)              ! for now the warp of the plates ...
-      call spectral(yw, 4d0, 1d0, 2d0)
-      call spectral(ux, 10d0, 2d0, 1.5d0)           ! ... and of the coasts
-      call spectral(uy, 10d0, 2d0, 1.5d0)
-      call spectral(f, 10d0, 1.5d0, pv(P_BETA))     ! the 300 waves of the cratons
+      call spectral(xw, 4*q, q, 2d0)                ! for now the warp of the plates ...
+      call spectral(yw, 4*q, q, 2d0)
+      call spectral(ux, 10*q, 2*q, 1.5d0)           ! ... and of the coasts
+      call spectral(uy, 10*q, 2*q, 1.5d0)
+      call spectral(f, 10*q, 1.5d0*q, pv(P_BETA))   ! the 300 waves of the cratons
       do o = 1, 4
-         call make_lattice(lh(o), NY/(12d0*2**(o - 1)), SALT_GRAD + o)
+         call make_lattice(lh(o), REFNY/(12d0*2**(o - 1)), SALT_GRAD + o)
       end do
       do o = 1, 5
-         call make_lattice(lr(o), NY/(6d0*2**(o - 1)), SALT_GRAD + 10 + o)
+         call make_lattice(lr(o), REFNY/(6d0*2**(o - 1)), SALT_GRAD + 10 + o)
       end do
       do o = 1, 2
-         call make_lattice(lm(o), NY/(2.5d0*2**(o - 1)), SALT_GRAD + 20 + o)
+         call make_lattice(lm(o), REFNY/(2.5d0*2**(o - 1)), SALT_GRAD + 20 + o)
       end do
-      call make_lattice(lb(1), NY/3d0, SALT_GRAD + 30)
-      call make_lattice(lb(2), NY/2.5d0, SALT_GRAD + 31)
-      call make_lattice(lk(1), 4.5d0*s0, SALT_GRAD + 32)
-      wc = 0.022d0*NY*pv(P_WARP)
+      call make_lattice(lb(1), REFNY/3d0, SALT_GRAD + 30)
+      call make_lattice(lb(2), REFNY/2.5d0, SALT_GRAD + 31)
+      call make_lattice(lk(1), 4.5d0, SALT_GRAD + 32)
+      wc = 0.022d0*REFNY*pv(P_WARP)
       do j = 1, NY
          do i = 1, NX
             x = i + wc*ux(i,j);  y = j + wc*uy(i,j)
@@ -1858,9 +1952,9 @@ contains
       real(dp) :: dmin, x, y, a, s, wp, d, d1, d2, r, e1x, e1y, e2x, e2y, dx, dy, nx_, ny_, nn
       real(dp) :: rvx, rvy, tot, cont_area, want
       real(dp), allocatable :: key(:)
-      integer,  allocatable :: idx(:)
+      integer,  allocatable :: idx(:), nwet(:)
       logical  :: ok
-      np = max(3, nint(pv(P_PLATES)))
+      np = max(3, nint(pv(P_PLATES)*NX*NY/(2*REFNY**2)))   ! so many to a board of 384 x 192
       allocate(pl(np))
       dmin = 0.62d0*sqrt(real(NX*NY, dp)/np)
       k = 0;  n = 0
@@ -1882,7 +1976,7 @@ contains
          pl(k)%vx = s*cos(a);  pl(k)%vy = s*sin(a)
       end do
       ! every cell's plate, seen through a gentle warp so that boundaries wander
-      wp = 0.075d0*NY
+      wp = 0.075d0*REFNY
       do j = 1, NY
          do i = 1, NX
             x = i + wp*xw(i,j);  y = j + wp*yw(i,j)
@@ -1913,10 +2007,19 @@ contains
          pl(k)%rad = sqrt(max(1, pl(k)%n)/PI)
       end do
       ! a third of the plates, big ones first, carry only ocean (while the others can
-      ! still hold the continents)
-      allocate(key(np), idx(np))
+      ! still hold the continents); first of all those that lie in the polar seas or along
+      ! the edge of the world, where no land may stand, so that the continents are not
+      ! crowded together into what is left
+      allocate(key(np), idx(np), nwet(np))
+      nwet = 0
+      do j = 1, NY
+         do i = 1, NX
+            if (edge_dist(i,j) < SEAW + SEARAMP .or. &
+                (pv(P_BELT) > 0.5d0 .and. abs(theta_of(j)) > 58*DEG)) nwet(pa(i,j)) = nwet(pa(i,j)) + 1
+         end do
+      end do
       do k = 1, np
-         key(k) = urand()*pl(k)%n
+         key(k) = urand()*pl(k)%n*(1 + 4*real(nwet(k), dp)/max(1, pl(k)%n))
       end do
       call sort_desc_r(key, idx)
       want = min(0.97d0, 1 - pv(P_SEA) + 0.1d0)*NX*NY
@@ -1945,14 +2048,17 @@ contains
 
    pure real(dp) function score(k, i, j)
       ! how continental cell (i,j) is by plate k's craton: nearness to its centre (in an
-      ! elongated metric), plus the craton noise, less near a boundary where plates part
+      ! elongated metric), plus the craton noise, less near a boundary where plates part,
+      ! and a little less at any boundary but a head-on collision, so that the continents
+      ! of neighbouring plates are mostly parted by a strait
       integer, intent(in) :: k, i, j
       real(dp) :: dx, dy, u, v
       dx = dxwrap(xw(i,j) - pl(k)%x) - pl(k)%ox
       dy = dywrap(yw(i,j) - pl(k)%y) - pl(k)%oy
       u = dx*pl(k)%ca + dy*pl(k)%sa;  v = dy*pl(k)%ca - dx*pl(k)%sa
       score = -sqrt(u*u/pl(k)%asp + v*v*pl(k)%asp)/pl(k)%rad + 0.32d0*ncr(i,j) &
-              - 0.7d0*smooth(0.05d0, 0.5d0, -clo(i,j))*exp(-bnd(i,j)/(0.3d0*pl(k)%rad))
+              - 0.7d0*smooth(0.05d0, 0.5d0, -clo(i,j))*exp(-bnd(i,j)/(0.3d0*pl(k)%rad)) &
+              - 0.3d0*(1 - smooth(0.2d0, 0.6d0, clo(i,j)))*exp(-bnd(i,j)/(0.1d0*pl(k)%rad))
    end function score
 
    subroutine gen_crust(cf)
@@ -2029,7 +2135,7 @@ contains
       allocate(q(NX*NY), comp(NX*NY))
       do pass = 1, 2
          want = pass == 2                         ! pass 1: holes of the sea; 2: specks of crust
-         lim = nint(merge(6d0, 90d0, want)*(NY/192d0)**2)
+         lim = merge(6, 90, want)
          comp = 0
          do j = 1, NY
             do i = 1, NX
@@ -2066,7 +2172,7 @@ contains
       integer,  allocatable :: src(:), slab(:), dd(:), lab(:)
       real(dp) :: s0, hm, rg, cs, ds, bd, d, ws, act, e, ab, rdg, amp
       integer  :: i, j, c, n
-      s0 = NY/192d0;  hm = pv(P_HMAX);  rg = pv(P_RIDGE)
+      s0 = 1;  hm = pv(P_HMAX);  rg = pv(P_RIDGE)     ! (s0: features keep their size in cells)
       allocate(src(NX*NY), slab(NX*NY), dd(NX*NY), lab(NX*NY))
       slab = 1
       ! distances into the crust from its edge, out from it, and from the ridges' axes
@@ -2153,34 +2259,39 @@ contains
 
    subroutine gen_hotspots(h)
       ! two or three hotspots under the open ocean, each leaving a trail of volcanoes that
-      ! age, sink and shrink downstream of its plate's motion: the youngest are islands
+      ! age, sink and shrink downstream of its plate's motion: the youngest are islands.
+      ! A hotspot rises well clear of the edge of the world (and, with the belt, of the
+      ! polar seas); the part of a cone that would stand off the board is not there
       real(dp), intent(inout) :: h(:,:)
-      integer  :: nh, k, m, nm, i, j, a, b, t, p, rr
+      integer  :: nh, k, m, nm, i, j, i0, j0, a, b, t, p, rr
       real(dp) :: x, y, vx, vy, vn, hg, h0, sg, gap, s0
-      s0 = NY/192d0
+      s0 = 1
       nh = 2 + irnd(2)
       do k = 1, nh
-         i = 1;  j = 1
+         i0 = 1;  j0 = 1
          do t = 1, 2000
-            i = irnd(NX);  j = irnd(NY)
-            if (.not. crust(i,j) .and. dout(i,j) > 10*s0 .and. dri(i,j) > 6*s0) exit
+            i0 = irnd(NX);  j0 = irnd(NY)
+            if (edge_dist(i0,j0) < SEAW + 20) cycle
+            if (pv(P_BELT) > 0.5d0 .and. abs(theta_of(j0)) > 60*DEG) cycle
+            if (.not. crust(i0,j0) .and. dout(i0,j0) > 10*s0 .and. dri(i0,j0) > 6*s0) exit
          end do
          if (t > 2000) cycle
-         p = pa(i,j)
+         p = pa(i0,j0)
          vn = max(1d-9, sqrt(pl(p)%vx**2 + pl(p)%vy**2))
          vx = pl(p)%vx/vn;  vy = pl(p)%vy/vn
          nm = 6 + irnd(6)
          gap = (3 + 1.5d0*urand())*s0
          h0 = 5600 + 1300*urand()
          do m = 0, nm - 1
-            x = i + m*gap*vx + 0.5d0*s0*grand();  y = j + m*gap*vy + 0.5d0*s0*grand()
+            x = i0 + m*gap*vx + 0.5d0*s0*grand();  y = j0 + m*gap*vy + 0.5d0*s0*grand()
             hg = h0*(1 - real(m, dp)/nm)**1.3d0*(0.8d0 + 0.4d0*urand())
             sg = (1.1d0 + 0.6d0*urand())*s0*(1 + 0.5d0*m/real(nm, dp))
             rr = ceiling(3*sg)
             do b = -rr, rr
                do a = -rr, rr
-                  i = wrapi(nint(x) + a);  j = wrapj(nint(y) + b)
-                  h(i,j) = h(i,j) + hg*exp(-(dxwrap(i - x)**2 + dywrap(j - y)**2)/(2*sg*sg))
+                  i = nint(x) + a;  j = nint(y) + b
+                  if (.not. onmap(i, j)) cycle
+                  h(i,j) = h(i,j) + hg*exp(-((i - x)**2 + (j - y)**2)/(2*sg*sg))
                end do
             end do
          end do
@@ -2221,7 +2332,8 @@ contains
    end subroutine gen_free
 
    subroutine spectral(f, qmax, q0, beta)
-      ! a Gaussian random field on the torus with zero mean and unit variance: plane waves
+      ! a Gaussian random field over the board with zero mean and unit variance (periodic,
+      ! which a world with edges never notices): plane waves
       ! of integer wavevector (kx, ky), |q| = |(kx NY/NX, ky)| <= qmax, with amplitude
       ! (1 + (q/q0)^2)^(-beta/2) times a Rayleigh draw and a random phase.  The double sum
       ! is separable, f = sum [a cos(x_m + p)] cos(y_m) - [a sin(x_m + p)] sin(y_m), so it
@@ -2722,10 +2834,15 @@ contains
       allocate(cl(n), ql(n), cs(n), qs(n), dco(n), dd(n), lab(n), lab2(n), src(n), slab(n))
       call components(0, cl, nlp, szl, stl, ql)
       call components(1, cs, ns, szs, sts, qs)
-      ! distance to the coast, which seeds keep away from
+      ! distance to the coast, which seeds keep away from; the World's Edge counts as one,
+      ! so that no seed of the sea is pushed against the edge of the world
       m = 0
       do j = 1, NY
          do i = 1, NX
+            if (inrim(i, j)) then
+               m = m + 1;  src(m) = i + (j - 1)*NX;  slab(m) = 1
+               cycle
+            end if
             do k = 1, 7, 2
                if ((land(wrapi(i + DI(k)), wrapj(j + DJ(k))) >= 1) .neqv. (land(i,j) >= 1)) then
                   m = m + 1;  src(m) = i + (j - 1)*NX;  slab(m) = 1
@@ -2768,11 +2885,12 @@ contains
          end do
       end do
       region = reshape(lab, [NX, NY])
-      ! label points: the cell of each region farthest from its borders and coasts
+      ! label points: the cell of each region farthest from its borders and coasts, and
+      ! from the World's Edge
       m = 0
       do j = 1, NY
          do i = 1, NX
-            border = .false.
+            border = inrim(i, j)
             do k = 1, 7, 2
                ni = wrapi(i + DI(k));  nj = wrapj(j + DJ(k))
                if (region(ni,nj) /= region(i,j)) border = .true.
@@ -2913,7 +3031,8 @@ contains
                do b = -r, r
                   do a = -r, r
                      if (max(abs(a), abs(b)) /= r) cycle
-                     i = wrapi(sdx(k) + a);  j = wrapj(sdy(k) + b)
+                     i = sdx(k) + a;  j = sdy(k) + b
+                     if (.not. onmap(i, j)) cycle
                      if (merge(0, 1, land(i,j) >= 1) /= kd) cycle
                      d2 = a*a + b*b + merge(0d0, 1d4, region(i,j) == k)
                      if (d2 < bd2) then
@@ -3225,10 +3344,10 @@ contains
    ! ================================================================ the sun
 
    subroutine terra_sun_tables()
-      ! insol and daylit for the present tilt from the geometry of the torus and its own
-      ! shadow.  The sun's strength is set once, so that the yearly global mean is 340 W/m2
-      ! at the reference tilt of 23 degrees; a doughnut tilted further catches more light.
-      ! With sunnorm = 1 the mean is held at 340 W/m2 at every tilt instead
+      ! insol and daylit for the present tilt, row by row of latitude.  The sun's strength
+      ! is set once, so that the yearly mean over the board is QMEAN at the reference tilt
+      ! of 23 degrees; a world tilted further catches more light on the whole.  With
+      ! sunnorm = 1 the mean is held at QMEAN at every tilt instead
       real(dp), allocatable :: raw(:,:), r2(:,:)
       real(dp) :: m
       if (P_SEA == 0) call terra_params()
@@ -3257,8 +3376,8 @@ contains
       ! raw(j, s): the daily mean of the light (in units of the solar constant) in season s
       ! at tilt tl; with fill, also daylit at each of the NHOUR hour angles.  Only the
       ! seasons from the equinox to the solstice are worked out: the rest of the year
-      ! repeats their declinations, a sun south of the ring plane is a northern sun seen
-      ! from the mirror row (theta -> -theta), and the day is symmetric about noon
+      ! repeats their declinations, a sun south of the equator is a northern sun seen from
+      ! the mirror row (theta -> -theta), and the day is symmetric about noon
       real(dp), intent(in)  :: tl
       real(dp), intent(out) :: raw(:, 0:)
       logical,  intent(in)  :: fill
@@ -3292,7 +3411,7 @@ contains
 
    pure subroutine season_twin(s, s0, south)
       ! the season s0 in 0..NSEAS/4 whose declination has the size of season s's, and
-      ! whether season s's sun is south of the ring plane
+      ! whether season s's sun is south of the equator
       integer, intent(in)  :: s
       integer, intent(out) :: s0
       logical, intent(out) :: south
@@ -3320,102 +3439,46 @@ contains
       end do
    end function global_mean
 
-   pure logical function shadowed(th, dec, h)
-      ! does the ray from the surface point (phi = 0, theta = th) toward the sun (declination
-      ! dec, hour angle h) meet the torus again?  With r = 1, R = RR and |s| = 1 the quartic
-      ! of the ray p = P + t s has the root t = 0 (P is on the torus); the cubic that is left,
-      ! t^3 + c2 t^2 + c1 t + c0, has c0 = 8 R (R + cos th) (n.s) > 0 on the sunny side, so its
-      ! positive roots come in pairs, and there are two exactly when its local minimum (the
-      ! larger critical point) lies at t > 0 and dips below zero
-      real(dp), intent(in) :: th, dec, h
-      real(dp) :: rho, pz, sx, sy, sz, a, c2, c1, c0, d, tp
-      rho = RR + cos(th);  pz = sin(th)
-      sx = cos(dec)*cos(h);  sy = -cos(dec)*sin(h);  sz = sin(dec)
-      a  = rho*sx + pz*sz
-      c2 = 4*a
-      c1 = 4*a*a + 4*RR*rho - 4*RR*RR*(sx*sx + sy*sy)
-      c0 = 8*RR*rho*(cos(th)*sx + sin(th)*sz)
-      shadowed = .false.
-      d = c2*c2 - 3*c1
-      if (d <= 0) return
-      tp = (sqrt(d) - c2)/3
-      if (tp <= 0) return
-      shadowed = ((tp + c2)*tp + c1)*tp + c0 < 0
-   end function shadowed
-
    pure real(dp) function terra_lit(th, dec, h)
-      ! the light on the torus at tube angle th when the sun has declination dec and the
-      ! hour angle is h (0 at local noon): max(0, n.s), or 0 in the shadow of the ring
+      ! the light at latitude th when the sun has declination dec and the hour angle is h
+      ! (0 at local noon): max(0, n.s)
       real(dp), intent(in) :: th, dec, h
-      terra_lit = cos(th)*cos(dec)*cos(h) + sin(th)*sin(dec)
-      if (terra_lit <= 0) then
-         terra_lit = 0
-      else if (shadowed(th, dec, h)) then
-         terra_lit = 0
-      end if
+      terra_lit = max(0d0, cos(th)*cos(dec)*cos(h) + sin(th)*sin(dec))
    end function terra_lit
 
    pure real(dp) function terra_daymean(th, dec) result(dm)
-      ! the daily mean of terra_lit: lit spans are found on a fine grid of hour angles and
-      ! their ends by bisection, and n.s = a + b cos h is integrated exactly over each span
-      ! (the day is symmetric about noon, so half a day will do)
+      ! the daily mean of terra_lit: n.s = a + b cos h is positive while the hour angle is
+      ! within h0 of noon, cos h0 = -a/b (h0 = 0 in the polar night, pi under the midnight
+      ! sun), and its mean over the day is (a h0 + b sin h0)/pi
       real(dp), intent(in) :: th, dec
-      real(dp) :: a, b, h0, h1, lo, hi, e, s
-      logical  :: l0, l1
-      integer  :: k, it
+      real(dp) :: a, b, c, h0
       a = sin(th)*sin(dec);  b = cos(th)*cos(dec)
-      s = 0;  h0 = 0;  l0 = lit(0d0)
-      do k = 1, NFINE
-         h1 = PI*k/NFINE
-         l1 = lit(h1)
-         if (l0 .and. l1) then
-            s = s + span(h0, h1)
-         else if (l0 .neqv. l1) then
-            lo = h0;  hi = h1
-            do it = 1, 26
-               e = 0.5d0*(lo + hi)
-               if (lit(e) .eqv. l0) then
-                  lo = e
-               else
-                  hi = e
-               end if
-            end do
-            e = 0.5d0*(lo + hi)
-            if (l0) then
-               s = s + span(h0, e)
-            else
-               s = s + span(e, h1)
-            end if
-         end if
-         h0 = h1;  l0 = l1
-      end do
-      dm = s/PI
-   contains
-      pure logical function lit(hh)
-         real(dp), intent(in) :: hh
-         lit = a + b*cos(hh) > 0
-         if (lit) lit = .not. shadowed(th, dec, hh)
-      end function lit
-      pure real(dp) function span(x, y)
-         real(dp), intent(in) :: x, y
-         span = a*(y - x) + b*(sin(y) - sin(x))
-      end function span
+      c = -a/max(b, 1d-12)
+      if (c >= 1) then
+         h0 = 0
+      else if (c <= -1) then
+         h0 = PI
+      else
+         h0 = acos(c)
+      end if
+      dm = max(0d0, (a*h0 + b*sin(h0))/PI)
    end function terra_daymean
 
    ! ================================================================ the Hand and the stars
 
    subroutine natural_star()
-      ! a star falls of itself, on land three times in five; the next one is a Poisson
-      ! wait away
+      ! a star falls of itself, on land three times in five, its crater well inside the
+      ! World's Edge; the next one is a Poisson wait away
       integer :: i, j, k, r
       logical :: on_land
       on_land = urand() < 0.6d0
-      i = 1;  j = 1
+      r = 3 + irnd(4)
+      i = NX/2;  j = NY/2
       do k = 1, 100000
          i = irnd(NX);  j = irnd(NY)
+         if (edge_dist(i, j) < SEAW + 2*r) cycle
          if ((land(i,j) >= 1) .eqv. on_land) exit
       end do
-      r = 3 + irnd(4)
       call push_cmd(cmd_t(kind=CMD_STARFALL, x=i, y=j, r=r, hand=.false.))
       terra_next_star = tick + max(1_i8, nint(-log(urand())*pv(P_GAP)*TPY, i8))
    end subroutine natural_star
@@ -3432,7 +3495,8 @@ contains
          do a = -rr, rr
             g = exp(-real(a*a + b*b, dp)/real(r*r, dp))
             if (g < 2d-3) cycle
-            i = wrapi(x + a);  j = wrapj(y + b)
+            i = x + a;  j = y + b
+            if (.not. onmap(i, j)) cycle
             e = elev(i,j)
             if (up) then
                amp = pv(P_BRUSH) + 0.3d0*max(0d0, -e)
@@ -3461,7 +3525,8 @@ contains
          do a = -2*r, 2*r
             d = sqrt(real(a*a + b*b, dp))/r
             if (d > 2) cycle
-            i = wrapi(x + a);  j = wrapj(y + b)
+            i = x + a;  j = y + b
+            if (.not. onmap(i, j)) cycle
             was = land(i,j) >= 1
             elev(i,j) = real(min(HCAP, max(-DCAP, elev(i,j) - pv(P_CRATER)*max(0d0, 1 - d*d) &
                                               + RIM*exp(-((d - 1)/0.3d0)**2))), sp)
@@ -3479,9 +3544,12 @@ contains
 
    subroutine reland(i, j)
       ! land or sea again after the height of (i,j) changed; a causeway raised well above
-      ! the waves becomes natural land
+      ! the waves becomes natural land.  The World's Edge stays open sea whatever is done
       integer, intent(in) :: i, j
-      if (elev(i,j) <= 0) then
+      if (inrim(i, j)) then
+         elev(i,j) = min(elev(i,j), -200.)
+         land(i,j) = 0
+      else if (elev(i,j) <= 0) then
          land(i,j) = 0
       else if (land(i,j) == 0 .or. (land(i,j) == 2 .and. elev(i,j) > 50)) then
          land(i,j) = 1
@@ -3510,7 +3578,7 @@ end module rl_terra
 !
 !  Every cell keeps the sunlight its albedo lets in and radiates A + B*T,
 !  while the air spreads heat between neighbours as diffusion over the
-!  curved skin of the torus (a Budyko-Sellers energy balance, implicit in
+!  map, closed at its edges (a Budyko-Sellers energy balance, implicit in
 !  time, so that it is stable at any step).  Frost is an Ising model whose
 !  field is the cold: ice aligns with its neighbours, its domain walls are
 !  crisp, and it brightens the ground, so the cold makes itself and one
@@ -3556,6 +3624,13 @@ module rl_climate
    real(dp), parameter :: GMIN = -25, GMAX = 60          ! range of the greenhouse forcing, W/m2
    real(dp), parameter :: DUSTMAX = 0.8d0
    real(dp), parameter :: SWHI = 1.5d0, SWLO = 0.6d0     ! turning points of the sweep
+   ! the climate's news: a Great Winter is the ice this far above the cover the world was
+   ! born with (it ends below the second mark), a snowball ice over this much of the world
+   ! (and its thaw below the second), a hothouse this much warmer than at birth and at
+   ! least HH_MIN (it ends HH_GAP cooler)
+   real(dp), parameter :: GW_ON = 0.10d0, GW_OFF = 0.05d0
+   real(dp), parameter :: SB_ON = 0.8d0, SB_OFF = 0.5d0
+   real(dp), parameter :: HH_ON = 9, HH_MIN = 25, HH_GAP = 2
    integer,  parameter :: SALT_FROST = 2101, SALT_WX = 2102   ! hr2 salts 2100..2199 are climate's
    ! the water cycle: rates per tick, vapour in units of saturation at 20 C
    real(sp), parameter :: KSEA = 0.5, KLAND = 0.35, KBARE = 0.15, KICE = 0.02  ! evaporation
@@ -3576,13 +3651,18 @@ module rl_climate
    real(sp), parameter :: TLO = -120
    integer,  parameter :: NTL = 2400
    ! the weather: travelling waves in the wind bands (band centre and width in degrees of
-   ! the tube, zonal and meridional wavenumbers, strength)
-   integer,  parameter :: NWAVE = 10
-   real(sp), parameter :: WTH(NWAVE) = [58., 58., 64., -58., -58., -64., 0., 0., 128., -128.]
-   real(sp), parameter :: WWD(NWAVE) = [20., 17., 13., 20., 17., 13., 16., 12., 20., 20.]
-   integer,  parameter :: WKX(NWAVE) = [5, 7, 11, 5, 6, 10, 8, 13, 5, 6]
-   integer,  parameter :: WKY(NWAVE) = [2, -1, 3, -2, 1, -3, 0, 2, 1, -1]
-   real(sp), parameter :: WAMP(NWAVE) = [0.9, 0.7, 0.45, 0.9, 0.7, 0.45, 0.6, 0.4, 0.5, 0.5]
+   ! latitude, zonal and meridional wavenumbers, strength): the storm tracks of the
+   ! westerlies in both hemispheres and the squalls of the equator
+   integer,  parameter :: NWAVE = 8
+   real(sp), parameter :: WTH(NWAVE) = [58., 58., 64., -58., -58., -64., 0., 0.]
+   real(sp), parameter :: WWD(NWAVE) = [20., 17., 13., 20., 17., 13., 16., 12.]
+   integer,  parameter :: WKX(NWAVE) = [5, 7, 11, 5, 6, 10, 8, 13]
+   integer,  parameter :: WKY(NWAVE) = [2, -1, 3, -2, 1, -3, 0, 2]
+   real(sp), parameter :: WAMP(NWAVE) = [0.9, 0.7, 0.45, 0.9, 0.7, 0.45, 0.6, 0.4]
+   real(dp), parameter :: DPOLE = 0.3d0                  ! heat transport at a pole, as a share of
+                                                         ! the tropics' (see geometry)
+   real(dp), parameter :: VPOLE = 15*DEG                 ! the north-south wind dies away over
+                                                         ! this last stretch before a pole
    integer,  parameter :: WEPOCH = 3                     ! years over which a band's storminess wanders
    ! droughts and ice bridges
    integer,  parameter :: NDM = 8                        ! landmasses watched for drought
@@ -3606,10 +3686,11 @@ module rl_climate
    real(sp), allocatable :: src(:,:), cdt(:,:), lyt(:,:)   ! sources, C/dt, explicit y-diffusion
    real(sp), allocatable :: rt(:,:), bt(:,:), axa(:,:)     ! the x sweep, transposed (NY,NX)
    real(sp), allocatable :: by(:,:), aya(:,:), ayc(:,:)    ! the y sweep (NX,NY)
-   real(sp), allocatable :: wcp(:,:), wz(:,:)              ! solver workspace
+   real(sp), allocatable :: wcp(:,:)                       ! solver workspace
    real(sp), allocatable :: wsum(:,:), wltm(:,:) ! soil: this year's sum, long-term mean
    integer,  allocatable :: lab(:,:), que(:)     ! labels and queue of the ice-bridge search
-   real(sp), allocatable :: dd(:), ax(:), ayu(:), ayd(:)   ! metric and diffusion by row
+   real(sp), allocatable :: ax(:), ayu(:), ayd(:)          ! diffusion by row (to east/west, north,
+                                                           ! south; none through a pole)
    real(sp), allocatable :: ush(:), vsh(:), conv(:)        ! winds (cells per tick), convergence
    real(sp), allocatable :: wer(:,:), wei(:,:)   ! the weather's row envelopes (NY, NWAVE)
    real(dp) :: wom(NWAVE) = 0, wph(NWAVE) = 0    ! wave frequencies (per tick) and phases
@@ -3630,6 +3711,8 @@ module rl_climate
    integer(i8) :: sw_t = 0, sw_len = 1
    ! news, each with ten years of hysteresis
    real(dp) :: ice_ann = 0, temp_ann = 0         ! one-year running means
+   real(dp) :: ice_birth = 0, temp_birth = 0     ! ... as the world was born: a Great Winter and a
+                                                 ! hothouse are measured from these
    logical  :: gw = .false., sb = .false., hh = .false.
    integer(i8) :: t_gw = 0, t_sb = 0, t_hh = 0
    real(dp) :: dltm(0:NDM) = -1, dncell(0:NDM) = 0
@@ -3660,15 +3743,18 @@ contains
          'Carbon breathed out by volcanoes, as a multiple of the rate that balances the '// &
          'weathering of the young world. More warms it, until warm wet rock draws it down.', &
          ui=.true.)
-      P_DIFF = reg_param('heatdiff', 'Heat transport', 'Climate', 3d0, 0.05d0, 20d0, &
-         'Diffusivity D of the energy balance, W/m2/K on a tube of unit radius: how strongly '// &
-         'the air carries heat from the hot outer equator to the poles and the ring.', ui=.false.)
-      P_TAUO = reg_param('oceanyears', 'Ocean memory', 'Climate', 0.4d0, 0.05d0, 4d0, &
-         'Heat capacity of the open sea, as its relaxation time C/B in years.', ui=.false.)
+      P_DIFF = reg_param('heatdiff', 'Heat transport', 'Climate', 2d0, 0.05d0, 20d0, &
+         'Diffusivity D of the energy balance, W/m2/K on a globe of unit radius: how strongly '// &
+         'the air carries heat from the hot equator toward the poles (in the tropics; less '// &
+         'beyond them).', ui=.false.)
+      P_TAUO = reg_param('oceanyears', 'Ocean memory', 'Climate', 1.5d0, 0.05d0, 4d0, &
+         'Heat capacity of the open sea, as its relaxation time C/B in years: it keeps the '// &
+         'polar seas from baking under the midnight sun.', ui=.false.)
       P_TAUL = reg_param('landyears', 'Land memory', 'Climate', 0.05d0, 0.01d0, 0.5d0, &
          'Heat capacity of land, as its relaxation time C/B in years.', ui=.false.)
-      P_TAUI = reg_param('seaiceyears', 'Sea-ice memory', 'Climate', 0.1d0, 0.01d0, 1d0, &
-         'Heat capacity of frozen sea (the ice insulates the water), as C/B in years.', ui=.false.)
+      P_TAUI = reg_param('seaiceyears', 'Sea-ice memory', 'Climate', 1.5d0, 0.01d0, 4d0, &
+         'Heat capacity of frozen sea, as C/B in years: the heat a sea must lose to freeze and '// &
+         'gain to thaw, so that the polar ice does not come and go with every season.', ui=.false.)
       P_AICE = reg_param('icealbedo', 'Ice albedo', 'Climate', 0.52d0, 0.3d0, 0.9d0, &
          'Fraction of sunlight that ice and snow reflect: the strength of the ice-albedo '// &
          'feedback.', ui=.false.)
@@ -3718,7 +3804,8 @@ contains
       call geometry()
       ghg = pv(P_GH0);  dust = 0;  climate_weath = 0
       gw = .false.;  sb = .false.;  hh = .false.
-      dltm = -1;  dry = .false.;  nws = 0;  wsum = 0;  linked = .false.
+      t_dry = -huge(1_i8)/2                      ! the clock starts again with every world
+      dltm = -1;  dncell = 0;  dry = .false.;  nws = 0;  wsum = 0;  linked = .false.
       spinning = .true.
       proxy = all(verd == 0)
       lum_user = pv(P_LUM)
@@ -3749,6 +3836,7 @@ contains
          wet = 1
       end where
       ice_frac = sum(spread(areaw, 1, NX), mask=ice > 0)
+      ice_ann = ice_frac;  temp_ann = sum(spread(areaw, 1, NX)*temp)
       ! calibrate the weathering under the sun the world was born under, then, if the
       ! slider says otherwise, let the world find the sun it really has
       wref = spin(NSPIN)
@@ -3762,6 +3850,11 @@ contains
       sun = lum_user
       spinning = .false.
       proxy = .false.
+      ! the climate the world is born with, which its news is measured against
+      ice_birth = ice_ann;  temp_birth = temp_ann
+      sb = ice_ann > SB_ON                       ! a world born white has only its thaw ahead
+      t_gw = tick - 10_i8*TPY;  t_sb = t_gw;  t_hh = t_gw;  t_dry = t_gw
+      if (sb) t_sb = tick
       call ice_bridges(.false.)                  ! the bridges the world is born with are no news
    end subroutine climate_init
 
@@ -3872,7 +3965,8 @@ contains
    subroutine ebm_step()
       ! NEBM ticks of C dT/dt = Q(1 - a) - (A + B T) + G + D lap T in every cell, by
       ! Douglas-Rachford ADI: implicit in x (with B T), then implicit in y; its steady
-      ! state is exact and every step is stable
+      ! state is exact and every step is stable.  No heat crosses the edges of the world:
+      ! the Laplacian is closed there (zero flux) in both halves of the scheme alike
       real(dp) :: dty, st, si, sw, sl, rs, ri, rw, rl
       real(sp) :: qrow(NY), co, cl, ci, aice, wd, ca, as, ac, a, v, g
       integer :: i, j, ks, ks2, k
@@ -3912,7 +4006,7 @@ contains
             end if
          end do
       end do
-      ! the explicit half of the y diffusion
+      ! the explicit half of the y diffusion (ayd(1) = ayu(NY) = 0: nothing through a pole)
       do j = 1, NY
          do i = 1, NX
             lyt(i,j) = ayu(j)*(tsl(i,jp(j)) - tsl(i,j)) - ayd(j)*(tsl(i,j) - tsl(i,jm(j)))
@@ -3920,10 +4014,10 @@ contains
       end do
       ! step 1: implicit in x, the rows being the systems (solved transposed)
       call to_rows()
-      call tricyc(NY, NX, axa, bt, axa, rt, wcp, wz)
+      call trid(NY, NX, axa, bt, axa, rt, wcp)
       ! step 2: implicit in y, the columns being the systems
       call from_rows()
-      call tricyc(NX, NY, aya, by, ayc, tsl, wcp, wz)
+      call trid(NX, NY, aya, by, ayc, tsl, wcp)
       call update_temp()
       ! means, the weathering, the carbon thermostat
       st = 0;  si = 0;  sw = 0;  sl = 0
@@ -3954,7 +4048,8 @@ contains
    end subroutine ebm_step
 
    subroutine to_rows()
-      ! right-hand side and diagonal of the x sweep, written transposed in tiles
+      ! right-hand side and diagonal of the x sweep, written transposed in tiles; the
+      ! westmost and eastmost cells have a neighbour on one side only
       integer, parameter :: TB = 32
       integer :: i, j, ib, jb
       do jb = 1, NY, TB
@@ -3967,6 +4062,7 @@ contains
             end do
          end do
       end do
+      bt(:,1) = bt(:,1) - ax;  bt(:,NX) = bt(:,NX) - ax
    end subroutine to_rows
 
    subroutine from_rows()
@@ -3985,51 +4081,35 @@ contains
       end do
    end subroutine from_rows
 
-   subroutine tricyc(m, n, a, b, c, d, cp, z)
-      ! m cyclic tridiagonal systems of length n at once (Thomas plus Sherman-Morrison),
-      ! solved in place; system s, row k (indices cyclic):
-      !    a(s,k) x(s,k-1) + b(s,k) x(s,k) + c(s,k) x(s,k+1) = d(s,k)
+   subroutine trid(m, n, a, b, c, d, cp)
+      ! m tridiagonal systems of length n at once (Thomas), solved in place; system s,
+      ! row k:   a(s,k) x(s,k-1) + b(s,k) x(s,k) + c(s,k) x(s,k+1) = d(s,k),
+      ! with a(s,1) and c(s,n) never read.  Every system here is strictly diagonally
+      ! dominant (the heat capacity sees to it), so no pivoting is needed
       integer,  intent(in)    :: m, n
       real(sp), intent(in)    :: a(m,n), b(m,n), c(m,n)
       real(sp), intent(inout) :: d(m,n)
-      real(sp), intent(out)   :: cp(m,n), z(m,n)
-      real(sp) :: gam(m), f(m), den
+      real(sp), intent(out)   :: cp(m,n)
+      real(sp) :: den
       integer :: s, k
       do s = 1, m
-         gam(s) = -b(s,1)
-         den = 1/(b(s,1) - gam(s))
+         den = 1/b(s,1)
          cp(s,1) = c(s,1)*den
          d(s,1) = d(s,1)*den
-         z(s,1) = gam(s)*den
       end do
-      do k = 2, n - 1
+      do k = 2, n
          do s = 1, m
             den = 1/(b(s,k) - a(s,k)*cp(s,k-1))
             cp(s,k) = c(s,k)*den
             d(s,k) = (d(s,k) - a(s,k)*d(s,k-1))*den
-            z(s,k) = -a(s,k)*z(s,k-1)*den
          end do
-      end do
-      do s = 1, m
-         den = 1/(b(s,n) - a(s,1)*c(s,n)/gam(s) - a(s,n)*cp(s,n-1))
-         d(s,n) = (d(s,n) - a(s,n)*d(s,n-1))*den
-         z(s,n) = (c(s,n) - a(s,n)*z(s,n-1))*den
       end do
       do k = n - 1, 1, -1
          do s = 1, m
             d(s,k) = d(s,k) - cp(s,k)*d(s,k+1)
-            z(s,k) = z(s,k) - cp(s,k)*z(s,k+1)
          end do
       end do
-      do s = 1, m
-         f(s) = (d(s,1) + a(s,1)*d(s,n)/gam(s))/(1 + z(s,1) + a(s,1)*z(s,n)/gam(s))
-      end do
-      do k = 1, n
-         do s = 1, m
-            d(s,k) = d(s,k) - f(s)*z(s,k)
-         end do
-      end do
-   end subroutine tricyc
+   end subroutine trid
 
    subroutine update_temp()
       ! the surface temperature: sea level less the lapse rate, then the Hand's spells;
@@ -4064,7 +4144,8 @@ contains
 
    subroutine frost_sweep(color)
       ! heat bath on one sublattice of the checkerboard (both every two ticks):
-      ! P(ice) = 1/(1 + exp(-2H/theta)), H = J*(the four neighbours) + (Tf - T)/width + snow
+      ! P(ice) = 1/(1 + exp(-2H/theta)), H = J*(the four neighbours) + (Tf - T)/width + snow;
+      ! a spin on the edge of the world has only the neighbours it has (a free boundary)
       integer, intent(in) :: color
       integer(i8) :: key
       integer :: i, j, k, nf, nrow
@@ -4078,6 +4159,12 @@ contains
          nrow = 0
          do i = 1 + mod(j + 1 + color, 2), NX, 2
             s = ice(ip(i),j) + ice(im(i),j) + ice(i,jp(j)) + ice(i,jm(j))
+            if (i == 1 .or. i == NX .or. j == 1 .or. j == NY) then   ! the clamped sides are itself
+               if (i == 1)  s = s - ice(i,j)
+               if (i == NX) s = s - ice(i,j)
+               if (j == 1)  s = s - ice(i,j)
+               if (j == NY) s = s - ice(i,j)
+            end if
             if (land(i,j) >= 1) then
                h = (TF_LAND - temp(i,j))*rdt
             else
@@ -4170,36 +4257,40 @@ contains
    end subroutine water_step
 
    subroutine winds()
-      ! the wind bands by row: trades at the outer equator, westerlies at mid-latitudes,
-      ! easterlies beyond the poles and reversed trades on the inner equator, in cells per
-      ! tick (narrow cells near the ring are crossed faster); the bands follow the sun
-      real(dp) :: dth, sh, th, u0, d, vn, vs
+      ! the wind bands by row: trades about the equator, westerlies at mid-latitudes and
+      ! easterlies about the poles, in cells per tick (every cell of the flat world is the
+      ! same size); the bands follow the sun, and the north-south wind dies away over the
+      ! last VPOLE before a pole, so that no air blows through the end of the world
+      real(dp) :: dth, sh, th, u0
       integer :: j
-      dth = TWOPI/NY
+      dth = PI/NY
       u0 = pv(P_WIND)
       sh = ITCZ*tilt*sin(TWOPI*season_frac())
       do j = 1, NY
-         th = theta_of(j) - sh
-         d = RR + cos(theta_of(j))
-         ush(j) = real(min(PADW - 2d0, max(2d0 - PADW, -cos(3*th)*u0*RR/d)), sp)
-         vsh(j) = real(-0.3d0*sin(3*th)*u0, sp)
-         vn = -0.3d0*sin(3*(th + dth/2))*u0
-         vs = -0.3d0*sin(3*(th - dth/2))*u0
-         conv(j) = real(1 - ((RR + cos(theta_of(j) + dth/2))*vn &
-                           - (RR + cos(theta_of(j) - dth/2))*vs)/d, sp)
+         th = theta_of(j)
+         ush(j) = real(min(PADW - 2d0, max(2d0 - PADW, -cos(3*(th - sh))*u0)), sp)
+         vsh(j) = real(vband(th), sp)
+         conv(j) = real(1 - (vband(th + dth/2) - vband(th - dth/2)), sp)   ! 0 on a pole's face
       end do
+   contains
+      pure real(dp) function vband(t)
+         ! the north-south wind at latitude t, cells per tick
+         real(dp), intent(in) :: t
+         vband = -0.3d0*sin(3*(t - sh))*u0*min(1d0, max(0d0, (PI/2 - abs(t))/VPOLE))
+      end function vband
    end subroutine winds
 
    subroutine advect(q)
-      ! carry q one tick downwind: semi-Lagrangian along x (a whole row moves as one),
-      ! then along y, in flux form, so vapour piles up where the winds converge
+      ! carry q one tick downwind: semi-Lagrangian along x (a whole row moves as one; what
+      ! blows in over the edge of the world is like what lies at the edge), then along y,
+      ! in flux form, so vapour piles up where the winds converge
       real(sp), intent(inout) :: q(NX,NY)
       real(sp) :: row(1-PADW:NX+PADW), f
       integer :: i, j, a, j1, j2
       do j = 1, NY
          row(1:NX) = q(:,j)
-         row(1-PADW:0) = q(NX-PADW+1:NX, j)
-         row(NX+1:NX+PADW) = q(1:PADW, j)
+         row(1-PADW:0) = q(1,j)
+         row(NX+1:NX+PADW) = q(NX,j)
          a = floor(ush(j));  f = ush(j) - a
          do i = 1, NX
             wk3(i,j) = (1 - f)*row(i - a) + f*row(i - a - 1)
@@ -4266,14 +4357,15 @@ contains
    end subroutine clouds
 
    subroutine blur(f, w)
-      ! one pass of the 1-2-1 filter in x and in y, on the torus (w is workspace)
+      ! one pass of the 1-2-1 filter in x and in y, mirrored at the edges of the world
+      ! (w is workspace)
       real(sp), intent(inout) :: f(NX,NY)
       real(sp), intent(out)   :: w(NX,NY)
       integer :: j
       do j = 1, NY
          w(2:NX-1,j) = 0.25*(f(1:NX-2,j) + 2*f(2:NX-1,j) + f(3:NX,j))
-         w(1,j)  = 0.25*(f(NX,j) + 2*f(1,j) + f(2,j))
-         w(NX,j) = 0.25*(f(NX-1,j) + 2*f(NX,j) + f(1,j))
+         w(1,j)  = 0.25*(3*f(1,j) + f(2,j))
+         w(NX,j) = 0.25*(f(NX-1,j) + 3*f(NX,j))
       end do
       do j = 1, NY
          f(:,j) = 0.25*(w(:,jm(j)) + 2*w(:,j) + w(:,jp(j)))
@@ -4304,11 +4396,11 @@ contains
 
    subroutine twin_step(ks, ks2)
       ! the twin's rows step together: the same sun, dust and greenhouse, bare ground
-      ! (land 0.32, sea 0.08) under the living world's clouds, implicit diffusion round
-      ! the tube, and ice wherever its row is cold enough (spread over the heights)
+      ! (land 0.32, sea 0.08) under the living world's clouds, implicit diffusion from
+      ! pole to pole, and ice wherever its row is cold enough (spread over the heights)
       integer, intent(in) :: ks, ks2
       real(dp) :: dty, st, si
-      real(sp) :: rhs(NY), dia(NY), fice(NY), w1(NY), w2(NY)
+      real(sp) :: rhs(NY), dia(NY), fice(NY), w1(NY)
       real(sp) :: q, fs, fl, c, a, cap, co, cl, ci, aice, rdt
       integer :: j, k
       dty = real(NEBM, dp)/TPY
@@ -4334,7 +4426,7 @@ contains
          dia(j) = cap + real(BOLR, sp) + ayu(j) + ayd(j)
          fice(j) = fland(j)*fl + (1 - fland(j))*fs
       end do
-      call tricyc(1, NY, twa, dia, twc, rhs, w1, w2)
+      call trid(1, NY, twa, dia, twc, rhs, w1)
       tw = rhs
       st = 0;  si = 0
       do j = 1, NY
@@ -4432,16 +4524,19 @@ contains
    end function spell_w
 
    subroutine spell_temp(k)
-      ! a freeze holds its disc below -10 C, a thaw above +8 C
+      ! a freeze holds its disc below -10 C, a thaw above +8 C (a disc that overhangs the
+      ! edge of the world is cut there)
       integer, intent(in) :: k
       integer :: di, dj, i, j
       real(sp) :: w, t
       associate (s => spells(k))
          do dj = -s%r, s%r
-            j = wrapj(s%y + dj)
+            j = s%y + dj
+            if (j < 1 .or. j > NY) cycle
             do di = -s%r, s%r
                if (di*di + dj*dj > s%r*s%r) cycle
-               i = wrapi(s%x + di)
+               i = s%x + di
+               if (i < 1 .or. i > NX) cycle
                w = spell_w(k, di*di + dj*dj)
                t = temp(i,j)
                if (s%kind == 1) then
@@ -4464,10 +4559,12 @@ contains
       if (spells(k)%kind == 2) s1 = -1
       associate (s => spells(k))
          do dj = -s%r, s%r
-            j = wrapj(s%y + dj)
+            j = s%y + dj
+            if (j < 1 .or. j > NY) cycle
             do di = -s%r, s%r
                if (di*di + dj*dj > s%r*s%r) cycle
-               i = wrapi(s%x + di)
+               i = s%x + di
+               if (i < 1 .or. i > NX) cycle
                if (ice(i,j) /= s1) ice_frac = ice_frac + areaw(j)*s1
                ice(i,j) = s1
             end do
@@ -4483,10 +4580,12 @@ contains
       real(sp) :: w
       associate (s => spells(k))
          do dj = -s%r, s%r
-            j = wrapj(s%y + dj)
+            j = s%y + dj
+            if (j < 1 .or. j > NY) cycle
             do di = -s%r, s%r
                if (di*di + dj*dj > s%r*s%r) cycle
-               i = wrapi(s%x + di)
+               i = s%x + di
+               if (i < 1 .or. i > NX) cycle
                w = spell_w(k, di*di + dj*dj)
                humid(i,j) = max(humid(i,j), (1 + 0.5*w)*qsa(i,j))
                if (land(i,j) >= 1) wet(i,j) = min(1., wet(i,j) + wsoil*w)
@@ -4508,36 +4607,43 @@ contains
 
    subroutine news()
       ! Great Winters, snowballs, thaws and hothouses, from one-year running means,
-      ! each state held at least ten years so that nothing flickers
-      real(dp) :: r
+      ! each state held at least ten years so that nothing flickers.  A Great Winter and a
+      ! hothouse are reckoned from the climate the world was born with, so that a world
+      ! born cool or warm is not news by itself; while climate_init spins, the running
+      ! means only settle
+      real(dp) :: r, gw_on_, sb_on_, sb_off_, hh_on_
       integer(i8) :: hold
       r = real(NEBM, dp)/TPY
       ice_ann = ice_ann + (ice_frac - ice_ann)*r
       temp_ann = temp_ann + (mean_temp - temp_ann)*r
+      if (spinning) return
       hold = 10_i8*TPY
+      gw_on_ = ice_birth + GW_ON
+      sb_on_ = max(SB_ON, gw_on_);  sb_off_ = max(SB_OFF, ice_birth + GW_OFF)
+      hh_on_ = max(HH_MIN, temp_birth + HH_ON)
       if (.not. gw) then
-         if (ice_ann > 0.35d0 .and. tick - t_gw >= hold) then
+         if (ice_ann > gw_on_ .and. tick - t_gw >= hold) then
             gw = .true.;  t_gw = tick
-            if (.not. spinning) call post(EV_FROST, v=ice_ann)
+            call post(EV_FROST, v=ice_ann)
          end if
-      else if (ice_ann < 0.31d0 .and. tick - t_gw >= hold) then
+      else if (ice_ann < ice_birth + GW_OFF .and. tick - t_gw >= hold) then
          gw = .false.;  t_gw = tick
       end if
       if (.not. sb) then
-         if (ice_ann > 0.8d0 .and. tick - t_sb >= hold) then
+         if (ice_ann > sb_on_ .and. tick - t_sb >= hold) then
             sb = .true.;  t_sb = tick
-            if (.not. spinning) call post(EV_SNOWBALL, v=ice_ann)
+            call post(EV_SNOWBALL, v=ice_ann)
          end if
-      else if (ice_ann < 0.5d0 .and. tick - t_sb >= hold) then
-         if (.not. spinning) call post(EV_THAW, v=real(tick - t_sb, dp)/TPY)
+      else if (ice_ann < sb_off_ .and. tick - t_sb >= hold) then
+         call post(EV_THAW, v=real(tick - t_sb, dp)/TPY)
          sb = .false.;  t_sb = tick
       end if
       if (.not. hh) then
-         if (temp_ann > 28 .and. tick - t_hh >= hold) then
+         if (temp_ann > hh_on_ .and. tick - t_hh >= hold) then
             hh = .true.;  t_hh = tick
-            if (.not. spinning) call post(EV_HOTHOUSE, v=temp_ann)
+            call post(EV_HOTHOUSE, v=temp_ann)
          end if
-      else if (temp_ann < 26 .and. tick - t_hh >= hold) then
+      else if (temp_ann < hh_on_ - HH_GAP .and. tick - t_hh >= hold) then
          hh = .false.;  t_hh = tick
       end if
    end subroutine news
@@ -4667,14 +4773,14 @@ contains
       if (allocated(tsl)) then
          if (size(tsl, 1) == NX .and. size(tsl, 2) == NY) return
          deallocate(tsl, qsa, lift, prec, evl, wk1, wk2, wk3, src, cdt, lyt, rt, bt, axa, by, &
-                    aya, ayc, wcp, wz, wsum, wltm, lab, que, dd, ax, ayu, ayd, ush, vsh, conv, &
+                    aya, ayc, wcp, wsum, wltm, lab, que, ax, ayu, ayd, ush, vsh, conv, &
                     wer, wei, tw, fland, cz, nland, twa, twc, hist, twin_row, twin_rowice)
       end if
       allocate(tsl(NX,NY), qsa(NX,NY), lift(NX,NY), prec(NX,NY), evl(NX,NY), wk1(NX,NY), &
                wk2(NX,NY), wk3(NX,NY), src(NX,NY), cdt(NX,NY), lyt(NX,NY), rt(NY,NX), &
                bt(NY,NX), axa(NY,NX), by(NX,NY), aya(NX,NY), ayc(NX,NY), wcp(NX,NY), &
-               wz(NX,NY), wsum(NX,NY), wltm(NX,NY), lab(NX,NY), que(NX*NY))
-      allocate(dd(NY), ax(NY), ayu(NY), ayd(NY), ush(NY), vsh(NY), conv(NY), &
+               wsum(NX,NY), wltm(NX,NY), lab(NX,NY), que(NX*NY))
+      allocate(ax(NY), ayu(NY), ayd(NY), ush(NY), vsh(NY), conv(NY), &
                wer(NY,NWAVE), wei(NY,NWAVE), tw(NY), fland(NY), cz(NY), nland(NY), twa(NY), &
                twc(NY), hist(0:NHB,NY), twin_row(NY), twin_rowice(NY))
       tsl = 10;  qsa = 1;  lift = 0;  prec = 0;  evl = 0;  wsum = 0;  wltm = 0
@@ -4703,21 +4809,21 @@ contains
    end function tindex
 
    subroutine geometry()
-      ! the torus by row: cells narrow toward the ring, the diffusion that goes with
-      ! that, the winds, and the envelopes of the weather
-      real(dp) :: dth, dph, th, d, dif, c
+      ! the flat world by row: square cells PI/NY on a side (the poles stand PI apart, as
+      ! on a globe of unit radius), the diffusion between them, closed at the poles and
+      ! at the east and west edges, the winds, and the envelopes of the weather
+      real(dp) :: h, th, d, dif, c
       integer :: i, j, m
-      dth = TWOPI/NY;  dph = TWOPI/NX
+      h = PI/NY
       dif = pv(P_DIFF)
       d_now = pv(P_DIFF);  u_now = pv(P_WIND)
       do j = 1, NY
          th = theta_of(j)
-         d = RR + cos(th)
-         dd(j) = real(d, sp)
-         ax(j) = real(dif/(d*dph)**2, sp)
-         ayu(j) = real(dif*(RR + cos(th + dth/2))/(d*dth**2), sp)
-         ayd(j) = real(dif*(RR + cos(th - dth/2))/(d*dth**2), sp)
+         ax(j) = real(dif*reach(th)/h**2, sp)
+         ayu(j) = real(dif*reach(th + h/2)/h**2, sp)
+         ayd(j) = real(dif*reach(th - h/2)/h**2, sp)
       end do
+      ayd(1) = 0;  ayu(NY) = 0                   ! no heat flows through a pole
       do i = 1, NX
          axa(:,i) = -ax
       end do
@@ -4727,38 +4833,49 @@ contains
       twa = -ayd;  twc = -ayu
       call winds()
       do m = 1, NWAVE
-         c = 0.5d0*(-cos(3*WTH(m)*DEG))*pv(P_WIND)*RR/(RR + cos(WTH(m)*DEG))
+         c = 0.5d0*(-cos(3*WTH(m)*DEG))*pv(P_WIND)
          wom(m) = WKX(m)*c*TWOPI/NX
          wph(m) = TWOPI*hr2(m, 7, wkey)
          do j = 1, NY
             th = theta_of(j)
-            d = dywrap((th - WTH(m)*DEG)/dth)*dth/(WWD(m)*DEG)
+            d = (th - WTH(m)*DEG)/(WWD(m)*DEG)
             wer(j,m) = real(exp(-d*d)*cos(WKY(m)*th), sp)
             wei(j,m) = real(exp(-d*d)*sin(WKY(m)*th), sp)
          end do
       end do
+   contains
+      pure real(dp) function reach(t)
+         ! how far the air carries heat at latitude t: in full in the tropics, where the
+         ! great cells of the trade winds stir it, and less toward the poles, DPOLE of it
+         ! there, so that the polar ice keeps more of its own cold
+         real(dp), intent(in) :: t
+         reach = DPOLE + (1 - DPOLE)*cos(t)**2
+      end function reach
    end subroutine geometry
 
    subroutine climate_selftest(err)
-      ! solve a random cyclic system with the solver and return its largest residual
+      ! solve random tridiagonal systems with the solver and return the largest residual
       real(sp), intent(out) :: err
       integer, parameter :: M = 3, N = 50
-      real(sp) :: a(M,N), b(M,N), c(M,N), d(M,N), x(M,N), cp(M,N), z(M,N), r
+      real(sp) :: a(M,N), b(M,N), c(M,N), d(M,N), x(M,N), cp(M,N), r
       integer :: s, k
       do k = 1, N
          do s = 1, M
             a(s,k) = -real(urand(), sp);  c(s,k) = -real(urand(), sp)
+            if (k == 1) a(s,k) = 0
+            if (k == N) c(s,k) = 0
             b(s,k) = 0.01 + abs(a(s,k)) + abs(c(s,k)) + real(urand(), sp)
             d(s,k) = real(grand(), sp)
          end do
       end do
       x = d
-      call tricyc(M, N, a, b, c, x, cp, z)
+      call trid(M, N, a, b, c, x, cp)
       err = 0
       do k = 1, N
          do s = 1, M
-            r = a(s,k)*x(s, 1 + modulo(k - 2, N)) + b(s,k)*x(s,k) &
-              + c(s,k)*x(s, 1 + modulo(k, N)) - d(s,k)
+            r = b(s,k)*x(s,k) - d(s,k)
+            if (k > 1) r = r + a(s,k)*x(s,k-1)
+            if (k < N) r = r + c(s,k)*x(s,k+1)
             err = max(err, abs(r))
          end do
       end do
@@ -4820,7 +4937,8 @@ module rl_flora
    real(sp), parameter :: BURNROOT = 0.5         ! share of the rootstock a fire leaves
    real(sp), parameter :: DDMAX = 0.2            ! stability bound of one diffusion step
    real(sp), parameter :: VTINY = 1e-6           ! verdure or rootstock below this is none
-   integer,  parameter :: NOTE_FIRE = 400, NOTE_REC = 100   ! sizes worth a Chronicle entry
+   integer,  parameter :: NOTE_FIRE = 400, NOTE_REC = 100   ! sizes worth a Chronicle entry,
+   integer,  parameter :: LAND0 = 19000          ! on the land cells of a medium board (see noted)
    integer,  parameter :: SPIN_MIN = 100, SPIN_MAX = 1000   ! years of fire prehistory
    real(sp), parameter :: WET_SPIN = 0.7         ! prehistory reads the soil this much drier
    integer,  parameter :: SALT_FIRE = 3100       ! hr2 salts 3100..3199 are flora's
@@ -4854,8 +4972,9 @@ module rl_flora
    integer(i8), allocatable :: fuelt(:,:)        ! tick from which a burnt cell can burn again
    integer(i8)   :: now = 0                      ! the fire clock: tick, or below 0 in prehistory
    integer(i8)   :: kspread(8) = 0, kfuel = 0    ! hr2 keys of this tick's fire draws
-   logical       :: spinning = .false.           ! prehistory: no records, no events, no ash
+   logical       :: spinning = .false.           ! prehistory: no events, no ash, only the record
    real(sp)      :: wetf = 1                     ! soil moisture as the flames feel it
+   integer       :: nland = 0                    ! land cells, counted as the plants grow
 
    ! ================================================================ the growing season
    real(sp), allocatable :: vold(:,:)            ! the verdure at the start of a sweep
@@ -4942,16 +5061,19 @@ contains
       cur = 1;  nslot = 0;  nfree = 0
       fire = 0;  ash = 0;  fuelt = LONGAGO       ! every cell's fuel has long grown back
       call set_consts()
+      nland = 0
       do j = 1, NY
          do i = 1, NX
             verd(i,j) = 0;  root(i,j) = 0
             if (land(i,j) == 0) cycle
+            nland = nland + 1
             root(i,j) = ROOT0*water(i, j)
             if (ice(i,j) < 0) verd(i,j) = capacity(i, j)
          end do
       end do
-      call prehistory()
-      flora_nfires = 0;  flora_maxfire = 0;  flora_maxtick = -1
+      flora_maxfire = 0
+      call prehistory()                         ! the land remembers its greatest fire
+      flora_nfires = 0;  flora_maxtick = -1
       flora_ignited = 0;  flora_burnt = 0;  flora_sizes = 0
       fire_hist = 0;  n_burning = 0
       now = tick
@@ -4960,12 +5082,13 @@ contains
 
    subroutine prehistory()
       ! eight fuel lifetimes of fire on the green land of today (cheap: only
-      ! flames are visited), leaving no ash, no warrants and no records.  The
-      ! flames feel the soil drier than it is today, as in a dry season, so
-      ! that the mosaic is critical for the fire weather to come rather than
-      ! above it.  Land too poor or too cold to burn today may burn in another
-      ! season: its fuel is made ready at random, as densely as the fires
-      ! left the rest
+      ! flames are visited), leaving no ash and no warrants, only the record
+      ! that a fire of this world must beat to be the greatest yet seen (or
+      ! the first fires of the world would each be one).  The flames feel the
+      ! soil drier than it is today, as in a dry season, so that the mosaic is
+      ! critical for the fire weather to come rather than above it.  Land too
+      ! poor or too cold to burn today may burn in another season: its fuel is
+      ! made ready at random, as densely as the fires left the rest
       integer :: i, j, k, nspin, nf, nr
       integer(i8) :: kc, kw
       real(dp) :: rho
@@ -5195,7 +5318,7 @@ contains
       ! diffusion with no flux into the sea, and the ash and old roots fade
       real(sp), intent(in) :: dt
       real(sp) :: rg, sd, dd, ds, dic, rs, adec, rdec, v, k, a, nl, rt, w, f
-      real(dp) :: sv, sw, rowv
+      real(dp) :: sv, rowv
       integer  :: i, j, ie, iw, jn, js, nrow
       call set_consts()
       rg  = real(pv(P_GROW), sp)*dt;  sd = real(pv(P_SEED), sp)*dt
@@ -5204,10 +5327,10 @@ contains
       adec = real(exp(-dt/(pv(P_ASHY)*TPY)), sp)
       rdec = real(exp(-dt/(pv(P_ROOTY)*TPY)), sp)
       vold = verd
-      sv = 0;  sw = 0
+      sv = 0;  nland = 0
       do j = 1, NY
-         jn = jp(j);  js = jm(j)
-         rowv = 0;  nrow = 0
+         jn = jp(j);  js = jm(j)                ! clamped at the edge: the self-neighbour
+         rowv = 0;  nrow = 0                    ! term cancels, so no flux leaves the board
          do i = 1, NX
             if (land(i,j) == 0) then
                if (verd(i,j) /= 0) verd(i,j) = 0
@@ -5253,27 +5376,27 @@ contains
             root(i,j) = min(VMAX, rt)
             rowv = rowv + v
          end do
-         sv = sv + areaw(j)*rowv;  sw = sw + areaw(j)*nrow
+         sv = sv + rowv;  nland = nland + nrow  ! a flat map: every cell weighs the same
       end do
       verd_mean = 0
-      if (sw > 0) verd_mean = sv/sw
+      if (nland > 0) verd_mean = sv/nland
    end subroutine grow
 
    real(dp) function land_mean(f)
-      ! area-weighted mean of a field over land
+      ! mean of a field over land (every cell of the flat map weighs the same)
       real(sp), intent(in) :: f(:,:)
-      real(dp) :: sv, sw
-      integer  :: i, j
-      sv = 0;  sw = 0
+      real(dp) :: sv
+      integer  :: i, j, n
+      sv = 0;  n = 0
       do j = 1, NY
          do i = 1, NX
             if (land(i,j) >= 1) then
-               sv = sv + areaw(j)*f(i,j);  sw = sw + areaw(j)
+               sv = sv + f(i,j);  n = n + 1
             end if
          end do
       end do
       land_mean = 0
-      if (sw > 0) land_mean = sv/sw
+      if (n > 0) land_mean = sv/n
    end function land_mean
 
    ! ================================================================ fire
@@ -5345,7 +5468,8 @@ contains
          end if
          if (fire(i,j) == 2) then
             do d = 1, 8
-               ii = wrapi(i + DI(d));  jj = wrapj(j + DJ(d))
+               ii = i + DI(d);  jj = j + DJ(d)
+               if (.not. onmap(ii, jj)) cycle       ! no flame leaps off the edge of the world
                if (fire(ii,jj) /= 0 .or. land(ii,jj) == 0 .or. ice(ii,jj) > 0) cycle
                if (verd(ii,jj) <= fu .or. now < fuelt(ii,jj)) cycle
                if (hr2(ii, jj, kspread(d)) < pb + ps*(1 - wetf*wet(ii,jj))) &
@@ -5434,18 +5558,21 @@ contains
    subroutine fire_over(s)
       ! a fire has burnt out: into the histogram, and into the Chronicle if
       ! it was great (more than NOTE_FIRE cells) or the greatest yet (and
-      ! more than NOTE_REC)
+      ! more than NOTE_REC), both in proportion to the land; a fire of the
+      ! prehistory only raises the record
       integer, intent(in) :: s
       logical :: rec
       integer :: n
       n = fires(s)%size
-      if (.not. spinning .and. n > 0) then
+      if (spinning) then
+         flora_maxfire = max(flora_maxfire, n)
+      else if (n > 0) then
          fire_hist(log2bin(n)) = fire_hist(log2bin(n)) + 1
          flora_nfires = flora_nfires + 1
          flora_burnt = flora_burnt + n
          flora_sizes(modulo(flora_nfires - 1, NSIZES) + 1) = n
          rec = n > flora_maxfire
-         if (n > NOTE_FIRE .or. (rec .and. n > NOTE_REC)) &
+         if (n > noted(NOTE_FIRE) .or. (rec .and. n > noted(NOTE_REC))) &
             call post(EV_FIRE, x=fires(s)%x, y=fires(s)%y, a=fires(s)%deaths, &
                       b=merge(1, 0, rec), v=real(n, dp), s=trim(CAUSE(fires(s)%cause)))
          if (rec) then
@@ -5456,6 +5583,13 @@ contains
       nfree = nfree + 1
       freeslot(nfree) = s
    end subroutine fire_over
+
+   integer function noted(n0)
+      ! a fire size worth telling of: n0 cells on the land of a medium board, more in
+      ! proportion on more land (a wider land has more fires, and greater ones)
+      integer, intent(in) :: n0
+      noted = max(n0, nint(real(n0, dp)*nland/LAND0))
+   end function noted
 
    ! ================================================================ the Hand and the stars
 
@@ -5469,7 +5603,8 @@ contains
          do di_ = -r - 1, r + 1
             w = min(1., max(0., r + 0.5 - sqrt(real(di_*di_ + dj_*dj_, sp))))
             if (w <= 0) cycle
-            i = wrapi(c%x + di_);  j = wrapj(c%y + dj_)
+            i = c%x + di_;  j = c%y + dj_
+            if (.not. onmap(i, j)) cycle        ! what falls beyond the edge is lost
             if (land(i,j) == 0) cycle
             verd(i,j) = min(VMAX, verd(i,j) + 0.6*w)
             ash(i,j) = min(1., ash(i,j) + 0.5*w)
@@ -5490,23 +5625,26 @@ contains
 
    subroutine bolt(c)
       ! lightning from the Hand: the cell struck and about half of the eight
-      ! around it catch, fuel or no fuel (ice and sea do not burn)
+      ! around it catch, fuel or no fuel (ice and sea do not burn); told of
+      ! only if something caught
       type(cmd_t), intent(in) :: c
       integer :: d, n, s
       n = 0;  s = 0
-      call catch(wrapi(c%x), wrapj(c%y))
+      if (.not. onmap(c%x, c%y)) return
+      call catch(c%x, c%y)
       do d = 1, 8
          if (urand() > 0.5d0) cycle
-         call catch(wrapi(c%x + DI(d)), wrapj(c%y + DJ(d)))
+         call catch(c%x + DI(d), c%y + DJ(d))
       end do
       n_burning = count_burning()
-      if (c%hand) call post(EV_MIRACLE, x=c%x, y=c%y, b=c%kind, v=real(n, dp))
+      if (c%hand .and. n > 0) call post(EV_MIRACLE, x=c%x, y=c%y, b=c%kind, v=real(n, dp))
    contains
       subroutine catch(i, j)
          ! set one cell alight, opening the fire's record with the first
          integer, intent(in) :: i, j
+         if (.not. onmap(i, j)) return
          if (land(i,j) == 0 .or. ice(i,j) > 0 .or. fire(i,j) /= 0) return
-         if (s == 0) s = new_fire(wrapi(c%x), wrapj(c%y), merge(1, 0, c%hand))
+         if (s == 0) s = new_fire(c%x, c%y, merge(1, 0, c%hand))
          call ignite(i, j, s, cur)
          n = n + 1
       end subroutine catch
@@ -5525,7 +5663,8 @@ contains
          do di_ = -m, m
             d = sqrt(real(di_*di_ + dj_*dj_, dp))
             if (d > 1.8d0*r) cycle
-            i = wrapi(c%x + di_);  j = wrapj(c%y + dj_)
+            i = c%x + di_;  j = c%y + dj_
+            if (.not. onmap(i, j)) cycle
             if (land(i,j) == 0 .or. fire(i,j) /= 0) cycle
             if (d < 1.2d0*r) then
                verd(i,j) = 0;  ash(i,j) = 1;  root(i,j) = 0
@@ -5589,8 +5728,11 @@ end module rl_flora
 !  the dead leave seeds in the soil, and noise at a real temperature keeps
 !  the board from freezing into ash (Schulman and Seiden).  The census
 !  keeps the table of peoples: who arose from whom, who became notable,
-!  who has fallen, and the events the chronicle tells of.  With purist on,
-!  all of it gives way to plain B3/S23 on the torus.
+!  who has fallen, and the events the chronicle tells of.  The board has
+!  an edge: no neighbour lies beyond it, and nothing is born, sown or
+!  sprouted in the World's Edge, the open sea along its rim.  With purist
+!  on, all of it gives way to plain B3/S23 on the bare board, whose edge
+!  is dead.
 !=======================================================================
 module rl_life
    use rl_core
@@ -5621,6 +5763,9 @@ module rl_life
    real(sp), parameter :: EGEN = 0.6            ! energy of the founders and of the Hand's cells
    real(sp), parameter :: EMANNA = 0.3          ! energy that manna gives the living
    integer,  parameter :: CONWAY_G = RULE_CONWAY + 8*65536 + 19*1048576   ! pigment 8, T* 18.5 C
+   integer,  parameter :: MAXM = 62             ! landmasses told apart (bits of an int64)
+   real(dp), parameter :: AREA0 = 384d0*192d0   ! the medium board, which the laws were set on
+   integer,  parameter :: CALM = 10             ! years a new soup settles before a die-off is news
    integer(i8), parameter :: MASK32 = 4294967295_i8
    integer,  parameter :: SALT_SEN = 4101, SALT_HEAT = 4102, SALT_MOM = 4103, SALT_X = 4104, &
                           SALT_MUT = 4105, SALT_MUT2 = 4106, SALT_HUNT = 4107, &
@@ -5634,6 +5779,7 @@ module rl_life
    integer(i1), allocatable :: nb(:,:)          ! live Moore neighbours (this generation)
    integer(i1), allocatable :: al0(:,:)         ! who was alive when this generation began
    integer(i1), allocatable :: wm(:,:)          ! birth mask of a willing cell, 0 if unwilling
+                                                ! (0:NX+1, 0:NY+1: none consents beyond the edge)
    integer,     allocatable :: hlist(:), dlist(:)   ! hunters and the dying of this tick
    integer  :: nh = 0, nd = 0
    real(sp), allocatable :: hz(:)               ! senescence hazard per tick by age
@@ -5645,18 +5791,20 @@ module rl_life
    ! ================================================================ the census
    integer,  allocatable :: slot(:)             ! slot(0:65535): census slot of a rule, 0 if none
    integer,  allocatable :: srule(:), scnt(:), smc(:,:), prev(:)
-   real(dp), allocatable :: sacc(:,:)           ! sums: pigment, T*, diet, cos/sin x, cos/sin y
+   real(dp), allocatable :: sacc(:,:)           ! sums: pigment, T*, diet, x, y
    integer  :: nslot = 0, nprev = 0, cap = 0
-   real(sp), allocatable :: cosx(:), sinx(:), cosy(:), siny(:)
    integer,  allocatable :: notables(:)         ! every rule that ever became notable
    integer  :: nnot = 0
    integer(i1), allocatable :: wandered(:), peaked(:), clscode(:)   ! (0:65535)
+   integer(i1), allocatable :: sprung(:)        ! (0:65535) 1: a fallen people has sprouted from seed
+   integer(i8), allocatable :: lands(:)         ! (0:65535) landmasses 1..MAXM ever lived on, bit m-1
    integer  :: ring(0:79) = 0, nring = 0        ! n_alive at the last 80 censuses (5 years)
    logical  :: dieoff_on = .false.
+   integer(i8) :: calm_until = 0                ! no die-off is news before this tick
    integer(i8) :: arise_t(16) = -huge(1_i8), rad_last = -huge(1_i8)
    integer  :: golden = 0, nbreath = 0
    integer(i8) :: breathe_at = -1
-   integer  :: mfirst(30) = -1                  ! first cell of each landmass (relabel detector)
+   integer  :: mfirst(MAXM) = -1                ! first cell of each landmass (relabel detector)
    integer, allocatable :: gx(:), gy(:), grl(:) ! gliders found by the last scan
 
    ! ================================================================ the Conway limit
@@ -5737,8 +5885,8 @@ contains
       P_SEEDY  = reg_param('seedyears', 'Seed lifetime', 'Life', 10d0, 1d0, 50d0, &
          'Years a seed survives in the soil.', ui=.false.)
       P_NOTABLE = reg_param('notable', 'Notable', 'Life', 250d0, 20d0, 2000d0, &
-         'Cells a people must number at once to become notable (scaled by board area).', &
-         ui=.false.)
+         'Cells a people must number at once to become notable, on a medium board (a bigger '// &
+         'board asks more, but only as the square root of its area).', ui=.false.)
       P_DREAD  = reg_param('dread', 'Dread breeds monsters', 'Life', 5d0, 0d0, 20d0, &
          'Extra mutation factor for a mother in dread (rate x (1 + this)).', ui=.false.)
       P_XENO   = reg_param('xenophobia', 'Xenophobia', 'Life', 0.04d0, 0d0, 0.5d0, &
@@ -5746,9 +5894,9 @@ contains
          'dies with this chance per stranger too many, times the hostility of the ground: '// &
          'borders between peoples become front lines, and in war they burn.', ui=.true.)
       P_SPORE  = reg_param('spores', 'Spores', 'Life', 0.6d0, 0d0, 8d0, &
-         'Spores cast on the wind per tick: each is carried from a random living cell, '// &
-         'lands far off and, on open fertile ground, grows into an L-tromino of its kind, '// &
-         'so peoples can reach lands their neighbours never touch.', ui=.false.)
+         'Spores cast on the wind per tick (on a medium board; a bigger one casts more, in '// &
+         'proportion to its area). Each grows, on open fertile ground far off, into an '// &
+         'L-tromino of its kind.', ui=.false.)
       P_SPDIST = reg_param('sporedist', 'Spore flight', 'Life', 22d0, 2d0, 120d0, &
          'Mean distance a spore is carried, cells.', ui=.false.)
       if (.not. allocated(clscode)) then
@@ -5767,8 +5915,8 @@ contains
       n_alive = 0;  n_peoples = 0;  n_notable = 0;  extinct_hist = 0
       life_gliders = 0;  life_gliders_seen = 0;  life_births = 0;  life_deaths = 0
       slot = 0;  nslot = 0;  nprev = 0;  nnot = 0
-      wandered = 0;  peaked = 0
-      ring = 0;  nring = 0;  dieoff_on = .false.
+      wandered = 0;  peaked = 0;  sprung = 0;  lands = 0
+      ring = 0;  nring = 0;  dieoff_on = .false.;  calm_until = 0
       arise_t = -huge(1_i8);  rad_last = -huge(1_i8)
       golden = 0;  nbreath = 0;  breathe_at = -1;  nmark = 0;  nh = 0;  nd = 0
       saved = .false.;  mfirst = -1;  hz_span = -1
@@ -5778,8 +5926,8 @@ contains
       ppl(RULE_CONWAY)%t_first = 0
       call add_notable(RULE_CONWAY)
       peaked(RULE_CONWAY) = 1                  ! they begin as all of life; that is no news
-      if (.not. genesis(7, .false.)) breathe_at = TPY
-      call life_census(.false.)
+      if (.not. genesis(min(16, max(7, nint(7*NX*NY/AREA0))), .false.)) breathe_at = TPY
+      call life_census(.false.)                ! (seven cradles on a medium board, up to 16 on more)
    end subroutine life_init
 
    subroutine life_step()
@@ -5835,28 +5983,21 @@ contains
 
    subroutine work_alloc()
       ! private arrays for the current board size, and the tables
-      integer :: i, j, k
+      integer :: k
       if (allocated(nb)) then
-         if (size(nb, 1) /= NX .or. size(nb, 2) /= NY) &
-            deallocate(nb, al0, wm, hlist, dlist, cosx, sinx, cosy, siny)
+         if (size(nb, 1) /= NX .or. size(nb, 2) /= NY) deallocate(nb, al0, wm, hlist, dlist)
       end if
-      if (.not. allocated(nb)) allocate(nb(NX,NY), al0(NX,NY), wm(NX,NY), hlist(NX*NY), &
-                                        dlist(NX*NY), cosx(NX), sinx(NX), cosy(NY), siny(NY))
+      if (.not. allocated(nb)) allocate(nb(NX,NY), al0(NX,NY), wm(0:NX+1,0:NY+1), hlist(NX*NY), &
+                                        dlist(NX*NY))
       nb = 0;  al0 = 0;  wm = 0
-      do i = 1, NX
-         cosx(i) = real(cos(phi_of(i)), sp);  sinx(i) = real(sin(phi_of(i)), sp)
-      end do
-      do j = 1, NY
-         cosy(j) = real(cos(TWOPI*(j - 0.5d0)/NY), sp)
-         siny(j) = real(sin(TWOPI*(j - 0.5d0)/NY), sp)
-      end do
       do k = 0, 31
          tstar(k) = topt_degc(k)
       end do
       do k = 0, 7
          dfac(k) = 1 - k/7.0
       end do
-      if (.not. allocated(slot)) allocate(slot(0:65535), wandered(0:65535), peaked(0:65535))
+      if (.not. allocated(slot)) allocate(slot(0:65535), wandered(0:65535), peaked(0:65535), &
+                                          sprung(0:65535), lands(0:65535))
       if (.not. allocated(clscode)) then
          allocate(clscode(0:65535))
          clscode = 0
@@ -5874,7 +6015,7 @@ contains
       integer, intent(in) :: n
       integer,  allocatable :: ti(:), tc(:), tm(:,:)
       real(dp), allocatable :: ta(:,:)
-      allocate(ti(n), tc(n), tm(0:31,n), ta(7,n))
+      allocate(ti(n), tc(n), tm(0:MAXM+1,n), ta(5,n))
       if (cap > 0) then
          ti(1:nslot) = srule(1:nslot);  tc(1:nslot) = scnt(1:nslot)
          tm(:,1:nslot) = smc(:,1:nslot);  ta(:,1:nslot) = sacc(:,1:nslot)
@@ -5989,7 +6130,8 @@ contains
       do k = 1, nc
          do jj = cys(k) - S/2, cys(k) + S/2 - 1
             do ii = cxs(k) - S/2, cxs(k) + S/2 - 1
-               i = wrapi(ii);  j = wrapj(jj)
+               i = ii;  j = jj
+               if (inrim(i, j)) cycle             ! none beyond the edge, none in the rim
                if (land(i,j) < 1 .or. ice(i,j) > 0 .or. alive(i,j) /= 0) cycle
                if (urand() >= 0.35d0) cycle
                kt = min(31, max(FROSTK + 1, nint((temp(i,j) + 10)/1.5)))
@@ -6006,6 +6148,7 @@ contains
       end do
       ok = sum(cns(1:nc)) > 0
       if (.not. ok) return
+      calm_until = tick + CALM*TPY              ! the soups settle before a die-off is news
       if (ppl(RULE_CONWAY)%state == 2) then    ! the founders breathe again
          ppl(RULE_CONWAY)%state = 1
          ppl(RULE_CONWAY)%flags = ibset(ppl(RULE_CONWAY)%flags, PF_LAZARUS)
@@ -6022,17 +6165,17 @@ contains
          ! open land between 8 and 28 C
          integer, intent(in) :: i_, j_
          temperate = land(i_,j_) >= 1 .and. ice(i_,j_) < 0 .and. temp(i_,j_) >= 8 .and. &
-                     temp(i_,j_) <= 28
+                     temp(i_,j_) <= 28 .and. .not. inrim(i_, j_)
       end function temperate
       real function habfrac(i_, j_)
-         ! open land in the cradle's box (every other cell)
+         ! open land in the cradle's box (every other cell; none beyond the rim)
          integer, intent(in) :: i_, j_
          integer :: a_, b_, m_
          m_ = 0
          do b_ = j_ - S/2, j_ + S/2 - 1, 2
             do a_ = i_ - S/2, i_ + S/2 - 1, 2
-               if (land(wrapi(a_), wrapj(b_)) >= 1 .and. ice(wrapi(a_), wrapj(b_)) < 0) &
-                  m_ = m_ + 1
+               if (inrim(a_, b_)) cycle
+               if (land(a_,b_) >= 1 .and. ice(a_,b_) < 0) m_ = m_ + 1
             end do
          end do
          habfrac = m_/real((S/2)**2)
@@ -6121,12 +6264,15 @@ contains
    end subroutine metabolise
 
    subroutine count_nb()
-      ! live Moore neighbours of every cell, from three-row column sums
+      ! live Moore neighbours of every cell, from three-row column sums; beyond
+      ! the edge lie no rows and no columns, only the dead
       integer(i1) :: vs(0:NX+1)
       integer :: j
+      vs(0) = 0;  vs(NX+1) = 0
       do j = 1, NY
-         vs(1:NX) = alive(:,jm(j)) + alive(:,j) + alive(:,jp(j))
-         vs(0) = vs(NX);  vs(NX+1) = vs(1)
+         vs(1:NX) = alive(:,j)
+         if (j > 1) vs(1:NX) = vs(1:NX) + alive(:,j-1)
+         if (j < NY) vs(1:NX) = vs(1:NX) + alive(:,j+1)
          nb(:,j) = vs(0:NX-1) + vs(1:NX) + vs(2:NX+1) - alive(:,j)
       end do
    end subroutine count_nb
@@ -6145,19 +6291,13 @@ contains
       vb = real(pv(P_VBIRTH), sp);  tdie = real(3*pv(P_SIGT), sp)
       nh = 0;  nd = 0
       do j = 1, NY
-         jn = jp(j);  js = jm(j)
+         jn = j + 1;  js = j - 1                  ! wm has a dead halo: none consents beyond
          do i = 1, NX
             n = nb(i,j)
             if (alive(i,j) /= 0) then
                g = gene(i,j)
                ok = btest(g, 7 + n) .and. energy(i,j) > 0
-               if (ok) then
-                  if (ice(i,j) > 0) then
-                     ok = ibits(g, 20, 5) <= FROSTK
-                  else
-                     ok = land(i,j) >= 1
-                  end if
-               end if
+               if (ok) ok = hab(i, j, g)          ! land, or ice if frost-adapted; not the rim
                if (ok .and. age(i,j) >= a_onset) &
                   ok = hr2(i, j, ksen) >= hz(min(age(i,j), a_end))
                if (ok) then
@@ -6185,11 +6325,11 @@ contains
                   if (xeno) died(i,j) = 2            ! fallen at a border (rl_polity counts them)
                   nd = nd + 1;  dlist(nd) = i + NX*(j - 1)
                end if
-            else if (n >= 2) then
+            else if (n >= 2 .and. .not. inrim(i, j)) then   ! none is born in the World's Edge
                if (ice(i,j) > 0) then
                   call birth(i, j, n, .true.)  ! only the frost-adapted, and no verdure needed
                else if (land(i,j) >= 1 .and. verd(i,j) >= vb) then
-                  bit = n - 2;  a = im(i);  b = ip(i)
+                  bit = n - 2;  a = i - 1;  b = i + 1
                   nw = 0
                   if (btest(wm(a,jn), bit)) nw = nw + 1
                   if (btest(wm(i,jn), bit)) nw = nw + 1
@@ -6221,7 +6361,8 @@ contains
       integer :: k, a, b
       nk = 0;  nf = 0
       do k = 1, 8
-         a = wrapi(i + DI(k));  b = wrapj(j + DJ(k))
+         a = i + DI(k);  b = j + DJ(k)
+         if (.not. onmap(a, b)) cycle
          if (al0(a,b) == 0) cycle
          if (hamming(g, gene(a,b)) <= 1) then
             nk = nk + 1
@@ -6242,8 +6383,8 @@ contains
       real(dp) :: u
       integer(i8) :: h
       logical  :: hyb
-      ni = [im(i), i, ip(i), im(i), ip(i), im(i), i, ip(i)]
-      nj = [jp(j), jp(j), jp(j), j, j, jm(j), jm(j), jm(j)]
+      ni = [i - 1, i, i + 1, i - 1, i + 1, i - 1, i, i + 1]   ! beyond the edge wm is 0:
+      nj = [j + 1, j + 1, j + 1, j, j, j - 1, j - 1, j - 1]   ! no parent lives there
       nw = 0;  etot = 0
       do k = 1, 8
          a = ni(k);  b = nj(k)
@@ -6361,6 +6502,7 @@ contains
       life_deaths = life_deaths + 1
       alive(i,j) = 0;  died(i,j) = 1;  born(i,j) = 0
       seedg(i,j) = gene(i,j);  seedt(i,j) = 0
+      if (inrim(i, j)) seedg(i,j) = 0           ! the sea of the World's Edge keeps no seed
       if (present(keep)) then
          if (keep) return
       end if
@@ -6369,9 +6511,12 @@ contains
    end subroutine die
 
    logical function hab(i, j, g)
-      ! can a cell of genome g live at (i,j)?  open land, or ice if frost-adapted
+      ! can a cell of genome g live at (i,j)?  open land, or ice if frost-adapted,
+      ! but never in the World's Edge (nor beyond it)
       integer, intent(in) :: i, j, g
-      if (ice(i,j) > 0) then
+      if (inrim(i, j)) then
+         hab = .false.
+      else if (ice(i,j) > 0) then
          hab = ibits(g, 20, 5) <= FROSTK
       else
          hab = land(i,j) >= 1
@@ -6421,7 +6566,8 @@ contains
       if (nb(i,j) < 1) return
       nn = 0
       do k = 1, 8
-         a = wrapi(i + DI(k));  b = wrapj(j + DJ(k))
+         a = i + DI(k);  b = j + DJ(k)
+         if (.not. onmap(a, b)) cycle
          if ((alive(a,b) /= 0 .and. born(a,b) == 0) .or. died(a,b) /= 0) then
             nn = nn + 1;  ka(nn) = a;  kb(nn) = b
          end if
@@ -6451,7 +6597,8 @@ contains
          if (hr2(i, j, kh) >= ph*d/7) cycle
          nn = 0
          do q = 1, 8
-            a = wrapi(i + DI(q));  b = wrapj(j + DJ(q))
+            a = i + DI(q);  b = j + DJ(q)
+            if (.not. onmap(a, b)) cycle
             if (alive(a,b) /= 0) then
                nn = nn + 1;  ka(nn) = a;  kb(nn) = b
             end if
@@ -6507,11 +6654,12 @@ contains
    subroutine spores()
       ! now and then a living cell casts a spore on the wind: it flies an
       ! exponentially distributed distance and, where the ground is open,
-      ! habitable and green, an L-tromino of its genome takes root
+      ! habitable and green, an L-tromino of its genome takes root (a bigger
+      ! board casts more; a spore carried past the World's Edge is lost)
       real(dp) :: d, th, x
       integer  :: k, ns, t, i, j, a, b, g
       if (n_alive == 0) return
-      x = pv(P_SPORE)
+      x = pv(P_SPORE)*NX*NY/AREA0
       ns = int(x)
       if (urand() < x - ns) ns = ns + 1
       do k = 1, ns
@@ -6524,31 +6672,34 @@ contains
          g = gene(i,j)
          d = -pv(P_SPDIST)*log(urand())
          th = TWOPI*urand()
-         a = wrapi(i + nint(d*cos(th)));  b = wrapj(j + nint(d*sin(th)))
+         a = i + nint(d*cos(th));  b = j + nint(d*sin(th))
+         if (inrim(a, b)) cycle
          if (alive(a,b) /= 0 .or. verd(a,b) < 0.2 .or. .not. hab(a, b, g)) cycle
          call sprout(a, b, g)
       end do
    end subroutine spores
 
    subroutine sprout(i, j, g)
-      ! an L-tromino of genome g grows from the seed at (i,j)
+      ! an L-tromino of genome g grows from the seed at (i,j).  A fallen people
+      ! only stirs: it lives again when it grows back to a fair number
       integer, intent(in) :: i, j, g
       integer :: dx, dy, k, a(3), b(3), r
       dx = merge(1, -1, urand() < 0.5d0);  dy = merge(1, -1, urand() < 0.5d0)
-      a = [i, wrapi(i + dx), i];  b = [j, j, wrapj(j + dy)]
+      a = [i, i + dx, i];  b = [j, j, j + dy]
       do k = 1, 3
+         if (inrim(a(k), b(k))) cycle
          if (alive(a(k),b(k)) /= 0 .or. .not. hab(a(k), b(k), g)) cycle
          call put_cell(a(k), b(k), g, real(pv(P_ECHILD), sp), 0)
       end do
       seedg(i,j) = 0;  seedt(i,j) = 0
       r = iand(g, 65535)
-      if (ppl(r)%state == 2) call revive(r, i, j, 1)
+      if (ppl(r)%state == 2) sprung(r) = 1
    end subroutine sprout
 
    subroutine revive(r, x, y, how)
       ! a fallen people lives again: from the seed bank (how 1) or by returning (0)
       integer, intent(in) :: r, x, y, how
-      ppl(r)%state = 1
+      ppl(r)%state = 1;  sprung(r) = 0
       ppl(r)%flags = ibset(ppl(r)%flags, PF_LAZARUS)
       call post(EV_LAZARUS, x=x, y=y, a=r, b=how, v=real(tick - ppl(r)%t_fell, dp)/TPY, &
                 s=merge('seed  ', 'return', how == 1))
@@ -6559,7 +6710,8 @@ contains
    subroutine life_census(quiet)
       ! recount the peoples; unless quiet, also keep their history and tell of it
       logical, intent(in) :: quiet
-      integer  :: i, j, g, r, s, m, k, thr, nm, bits, newb
+      integer  :: i, j, g, r, s, m, k, thr, nm, x, y
+      integer(i8) :: bits, newb
       real(dp) :: nn
       logical  :: relab
       do k = 1, nprev
@@ -6580,9 +6732,8 @@ contains
             sacc(1,s) = sacc(1,s) + ibits(g, 16, 4)
             sacc(2,s) = sacc(2,s) + ibits(g, 20, 5)
             sacc(3,s) = sacc(3,s) + ibits(g, 25, 3)
-            sacc(4,s) = sacc(4,s) + cosx(i);  sacc(5,s) = sacc(5,s) + sinx(i)
-            sacc(6,s) = sacc(6,s) + cosy(j);  sacc(7,s) = sacc(7,s) + siny(j)
-            m = min(31, max(0, mass(i,j)))
+            sacc(4,s) = sacc(4,s) + i;  sacc(5,s) = sacc(5,s) + j
+            m = min(MAXM + 1, max(0, mass(i,j)))
             smc(m,s) = smc(m,s) + 1
          end do
       end do
@@ -6596,24 +6747,25 @@ contains
          ppl(r)%pig = real(sacc(1,s)/nn, sp)
          ppl(r)%topt = real(1.5d0*sacc(2,s)/nn - 10, sp)
          ppl(r)%diet = real(sacc(3,s)/nn, sp)
-         ppl(r)%cx = centre(sacc(5,s), sacc(4,s), NX)
-         ppl(r)%cy = centre(sacc(7,s), sacc(6,s), NY)
+         ppl(r)%cx = real(sacc(4,s)/nn, sp)     ! the plain mean: the board is flat
+         ppl(r)%cy = real(sacc(5,s)/nn, sp)
          bits = 0;  nm = 0
-         do m = 1, 30
+         do m = 1, MAXM
             if (smc(m,s) >= 3) then
                bits = ibset(bits, m - 1);  nm = nm + 1
             end if
          end do
-         if (smc(31,s) >= 3) nm = nm + 1
+         if (smc(MAXM + 1,s) >= 3) nm = nm + 1
          ppl(r)%nmass = nm
          if (relab) then
-            ppl(r)%massbits = bits
+            lands(r) = bits
          else
-            newb = iand(bits, not(ppl(r)%massbits))
+            newb = iand(bits, not(lands(r)))
             if (newb /= 0 .and. ppl(r)%state == 1 .and. .not. quiet) &
                call crossing(r, trailz(newb) + 1)
-            ppl(r)%massbits = ior(ppl(r)%massbits, bits)
+            lands(r) = ior(lands(r), bits)
          end if
+         ppl(r)%massbits = int(iand(lands(r), 1073741823_i8))   ! the first 30, as before
          if (.not. quiet) then
             ppl(r)%t_last = tick
             if (ppl(r)%t_first < 0) ppl(r)%t_first = tick
@@ -6625,11 +6777,13 @@ contains
       if (.not. quiet) then
          do s = 1, nslot
             r = srule(s)
-            if (scnt(s) < thr) cycle
             if (ppl(r)%state == 0) then
-               call arise(r)
-            else if (ppl(r)%state == 2) then
-               call revive(r, wrapi(nint(ppl(r)%cx)), wrapj(nint(ppl(r)%cy)), 0)
+               if (scnt(s) >= thr) call arise(r)
+            else if (ppl(r)%state == 2) then     ! a real return, or seed grown to a fair number
+               if (scnt(s) >= thr .or. (sprung(r) /= 0 .and. 4*scnt(s) >= thr)) then
+                  call member_near(r, x, y)
+                  call revive(r, x, y, int(sprung(r)))
+               end if
             end if
          end do
          call watch_notables()
@@ -6651,28 +6805,20 @@ contains
       end do
    end subroutine life_census
 
-   real(sp) function centre(sn, cs, nn)
-      ! circular mean of a coordinate on a ring of nn cells, in 1..nn
-      real(dp), intent(in) :: sn, cs
-      integer,  intent(in) :: nn
-      real(dp) :: x
-      x = modulo(atan2(sn, cs)/TWOPI*nn + 0.5d0 - 1, real(nn, dp)) + 1
-      centre = real(min(real(nn, dp), x), sp)
-   end function centre
-
    integer function notable_threshold()
-      ! P_NOTABLE cells on the medium board, scaled by area
-      notable_threshold = max(10, nint(pv(P_NOTABLE)*NX*NY/(384d0*192d0)))
+      ! P_NOTABLE cells on the medium board; on another, as the square root of
+      ! its area (a bigger world holds more peoples, not only bigger ones)
+      notable_threshold = max(10, nint(pv(P_NOTABLE)*sqrt(NX*NY/AREA0)))
    end function notable_threshold
 
    logical function relabelled()
       ! have the landmasses been renumbered since the last census?
-      integer :: f(30), i, j, m
+      integer :: f(MAXM), i, j, m
       f = -1
       do j = 1, NY
          do i = 1, NX
             m = mass(i,j)
-            if (m >= 1 .and. m <= 30) then
+            if (m >= 1 .and. m <= MAXM) then
                if (f(m) < 0) f(m) = i + NX*(j - 1)
             end if
          end do
@@ -6730,16 +6876,21 @@ contains
    end function notable_ancestor
 
    subroutine arise(r)
-      ! a people has become notable: give it a hue and tell of it
+      ! a people has become notable: give it a hue and tell of it, once (a
+      ! hybrid's story is its arising: s = 'hybrid', the mate in ppl(r)%mate)
       integer, intent(in) :: r
       integer :: x, y, k, nrec
       ppl(r)%state = 1;  ppl(r)%t_named = tick
       if (ppl(r)%hue < 0) ppl(r)%hue = new_hue(r)
       call add_notable(r)
       call member_near(r, x, y)
-      call post(EV_ARISE, x=x, y=y, a=r, b=notable_ancestor(r), v=real(ppl(r)%n, dp))
-      if (ppl(r)%mate >= 0) call post(EV_HYBRID, x=x, y=y, a=r, b=ppl(r)%mate, &
-                                      v=real(ppl(r)%parent, dp))
+      if (ppl(r)%mate >= 0) then
+         ppl(r)%flags = ibset(ppl(r)%flags, PF_HYBRID)
+         call post(EV_ARISE, x=x, y=y, a=r, b=notable_ancestor(r), v=real(ppl(r)%n, dp), &
+                   s='hybrid')
+      else
+         call post(EV_ARISE, x=x, y=y, a=r, b=notable_ancestor(r), v=real(ppl(r)%n, dp))
+      end if
       arise_t(1:15) = arise_t(2:16);  arise_t(16) = tick
       nrec = 0
       do k = 1, 16
@@ -6805,6 +6956,7 @@ contains
       integer :: k, r, x, y
       do k = 1, nnot
          r = notables(k)
+         if (ppl(r)%state == 2 .and. ppl(r)%n == 0) sprung(r) = 0   ! its sprouts are gone
          if (ppl(r)%state /= 1) cycle
          x = wrapi(nint(ppl(r)%cx));  y = wrapj(nint(ppl(r)%cy))
          if (ppl(r)%n == 0) then
@@ -6834,9 +6986,15 @@ contains
    end subroutine watch_notables
 
    subroutine watch_dieoff(thr)
-      ! a die-off: the living fall below half their most of the last five years
+      ! a die-off: the living fall below half their most of the last five years.
+      ! A soup newly poured by Genesis thins as it settles; that is no dying,
+      ! so the years are counted only from the end of the calm
       integer, intent(in) :: thr
       integer :: mx
+      if (tick < calm_until) then
+         nring = 0;  dieoff_on = .false.
+         return
+      end if
       ring(mod(nring, 80)) = n_alive;  nring = nring + 1
       mx = maxval(ring(0:min(nring, 80) - 1))
       if (.not. dieoff_on .and. mx >= 2*thr .and. 2*n_alive < mx) then
@@ -6851,34 +7009,34 @@ contains
 
    subroutine life_find_gliders(ng, x, y, rl)
       ! every isolated glider (any phase and heading, alone in its 5x5 box, all
-      ! five cells of one rule): the centre of its 3x3 box and its rule
+      ! five cells of one rule): the centre of its 3x3 box and its rule.  Beyond
+      ! the edge all is dead
       integer, intent(out) :: ng
       integer, allocatable, intent(inout) :: x(:), y(:), rl(:)
       integer, allocatable :: t(:)
-      integer :: col(NX), i, j, code, r, k, a, b, i2, j2
+      integer :: col(0:NX+1), i, j, code, r, k, a, b, i2, j2
       logical :: lone
       ng = 0
       if (.not. allocated(x)) allocate(x(64), y(64), rl(64))
+      col(0) = 0;  col(NX+1) = 0
       do j = 1, NY
          do i = 1, NX
-            col(i) = alive(i,jp(j)) + 8*alive(i,j) + 64*alive(i,jm(j))
+            col(i) = lv(i, j + 1) + 8*alive(i,j) + 64*lv(i, j - 1)
          end do
          do i = 1, NX
-            code = col(im(i)) + 2*col(i) + 4*col(ip(i))
+            code = col(i - 1) + 2*col(i) + 4*col(i + 1)
             if (.not. isglider(code)) cycle
             lone = .true.
             do k = -2, 2
-               i2 = wrapi(i + k)
-               if (alive(i2, wrapj(j + 2)) /= 0 .or. alive(i2, wrapj(j - 2)) /= 0) lone = .false.
-               j2 = wrapj(j + k)
-               if (alive(wrapi(i + 2), j2) /= 0 .or. alive(wrapi(i - 2), j2) /= 0) lone = .false.
+               if (lv(i + k, j + 2) /= 0 .or. lv(i + k, j - 2) /= 0) lone = .false.
+               if (lv(i + 2, j + k) /= 0 .or. lv(i - 2, j + k) /= 0) lone = .false.
             end do
             if (.not. lone) cycle
             r = -1
             do b = -1, 1
                do a = -1, 1
-                  i2 = wrapi(i + a);  j2 = wrapj(j + b)
-                  if (alive(i2,j2) == 0) cycle
+                  i2 = i + a;  j2 = j + b
+                  if (lv(i2, j2) == 0) cycle
                   if (r < 0) r = iand(gene(i2,j2), 65535)
                   if (iand(gene(i2,j2), 65535) /= r) lone = .false.
                end do
@@ -6892,6 +7050,13 @@ contains
             ng = ng + 1;  x(ng) = i;  y(ng) = j;  rl(ng) = r
          end do
       end do
+   contains
+      integer function lv(i_, j_)
+         ! alive at (i_,j_), 0 beyond the edge
+         integer, intent(in) :: i_, j_
+         lv = 0
+         if (onmap(i_, j_)) lv = alive(i_,j_)
+      end function lv
    end subroutine life_find_gliders
 
    subroutine scan_gliders(quiet)
@@ -6912,7 +7077,7 @@ contains
    ! ================================================================ the Conway limit
 
    subroutine purist_enter()
-      ! remember the living world, then hand the torus to B3/S23
+      ! remember the living world, then hand the board to B3/S23
       if (allocated(sv_alive)) deallocate(sv_alive, sv_gene, sv_energy, sv_age, sv_awe)
       allocate(sv_alive, source=alive)
       allocate(sv_gene, source=gene)
@@ -6933,8 +7098,9 @@ contains
    end subroutine purist_leave
 
    subroutine purist_step()
-      ! exact B3/S23 on the whole torus, land and sea: no energy, no noise,
-      ! no mutation; the newborn are Conwayans
+      ! exact B3/S23 on the whole board, land, sea and the World's Edge alike,
+      ! and dead beyond it: no energy, no noise, no mutation; the newborn are
+      ! Conwayans
       integer :: i, j, n
       real(sp) :: ec
       born = 0;  died = 0
@@ -6980,7 +7146,8 @@ contains
       do b = -r, r
          do a = -r, r
             if (a*a + b*b > r*r) cycle
-            i = wrapi(c%x + a);  j = wrapj(c%y + b)
+            i = c%x + a;  j = c%y + b
+            if (.not. onmap(i, j)) cycle          ! what falls beyond the edge is lost
             if (urand() >= 0.35d0) cycle
             g = g0
             if (g == 0) g = local_conwayan(i, j)
@@ -6994,8 +7161,8 @@ contains
       g = g0
       if (g == 0) g = RULE_CONWAY
       if (ns > 0) call first_seen(iand(g, 65535), -1, -1)
-      if (c%hand) call post(EV_MIRACLE, x=wrapi(c%x), y=wrapj(c%y), a=iand(g, 65535), &
-                            b=c%kind, v=real(ns, dp))
+      if (c%hand .and. ns > 0) call post(EV_MIRACLE, x=wrapi(c%x), y=wrapj(c%y), &
+                                         a=iand(g, 65535), b=c%kind, v=real(ns, dp))
    end subroutine sow
 
    subroutine manna(c)
@@ -7006,7 +7173,8 @@ contains
       do b = -r, r
          do a = -r, r
             if (a*a + b*b > r*r) cycle
-            i = wrapi(c%x + a);  j = wrapj(c%y + b)
+            i = c%x + a;  j = c%y + b
+            if (.not. onmap(i, j)) cycle
             if (alive(i,j) /= 0) energy(i,j) = min(1., energy(i,j) + EMANNA)
          end do
       end do
@@ -7022,7 +7190,8 @@ contains
          do a = -3*r, 3*r
             d2 = a*a + b*b
             if (d2 > 9*r*r) cycle
-            i = wrapi(c%x + a);  j = wrapj(c%y + b)
+            i = c%x + a;  j = c%y + b
+            if (.not. onmap(i, j)) cycle
             if (alive(i,j) == 0) cycle
             if (d2 <= r*r) then
                call slay(i, j)
@@ -7042,7 +7211,8 @@ contains
       do b = -r, r
          do a = -r, r
             if (a*a + b*b > r*r) cycle
-            i = wrapi(c%x + a);  j = wrapj(c%y + b)
+            i = c%x + a;  j = c%y + b
+            if (.not. onmap(i, j)) cycle
             if (alive(i,j) == 0) cycle
             call slay(i, j)
             nk = nk + 1
@@ -7091,12 +7261,14 @@ contains
 
    subroutine life_stamp(name, x, y, g0, orient, n)
       ! write a named pattern centred at (x,y) with genome g0 (a local Conwayan
-      ! if 0), after clearing its box; n = cells set (0 if the name is unknown)
+      ! if 0), after clearing its box; n = cells set (0 if the name is unknown).
+      ! A pattern that would hang over the World's Edge (in the Conway limit,
+      ! over the edge of the board) is moved in until it lies whole inside
       character(len=*), intent(in)  :: name
       integer,          intent(in)  :: x, y, g0, orient
       integer,          intent(out) :: n
       character(len=36) :: rows(13)
-      integer :: h, w, r, cc, dx, dy, i, j, g, lo(2), hi(2), pass
+      integer :: h, w, r, cc, dx, dy, i, j, g, lo(2), hi(2), pass, m, x0, y0
       n = 0;  rows = ''
       select case (trim(adjustl(name)))
       case ('glider');   h = 3;  w = 3;   rows(1:h) = PGLIDER
@@ -7112,9 +7284,13 @@ contains
       lo = huge(1);  hi = -huge(1)
       do pass = 1, 2                             ! 1: the box, 2: the cells
          if (pass == 2) then
+            m = merge(1, RIMW + 1, purist)       ! the first column (and row) it may touch
+            x0 = max(m - lo(1), min(NX + 1 - m - hi(1), x))
+            y0 = max(m - lo(2), min(NY + 1 - m - hi(2), y))
             do dy = lo(2) - 1, hi(2) + 1
                do dx = lo(1) - 1, hi(1) + 1
-                  i = wrapi(x + dx);  j = wrapj(y + dy)
+                  i = x0 + dx;  j = y0 + dy
+                  if (.not. onmap(i, j)) cycle
                   if (alive(i,j) /= 0) call slay(i, j)
                end do
             end do
@@ -7125,7 +7301,8 @@ contains
                if (pass == 1) then
                   lo = min(lo, [dx, dy]);  hi = max(hi, [dx, dy])
                else if (rows(r)(cc:cc) == 'O') then
-                  i = wrapi(x + dx);  j = wrapj(y + dy)
+                  i = x0 + dx;  j = y0 + dy
+                  if (.not. onmap(i, j)) cycle
                   g = g0
                   if (g == 0) g = local_conwayan(i, j)
                   call put_cell(i, j, g, EGEN, 0)
@@ -7431,8 +7608,9 @@ module rl_spirits
               P_SHRINE = 0, P_ZEAL = 0
 
    ! ================================================================ fixed numbers
-   integer, parameter :: TOLD_AT  = 48        ! cases before a natural outbreak is told (medium)
-   integer, parameter :: NTEST    = 16        ! live cells tested for crowding every 16 ticks
+   integer, parameter :: TOLD_AT  = 48        ! cases before a natural outbreak is told, at least
+   integer, parameter :: NTEST    = 16        ! live cells tested for crowding every 16 ticks,
+                                              ! on 384 x 192 cells (more on a bigger board)
    integer, parameter :: CROWD_W  = 4         ! half-width of the crowding window (9 x 9)
    integer, parameter :: CROWD_L  = 41        ! land cells a window counts as at least (half)
    integer, parameter :: NFEW     = 12        ! cells the Hand's pestilence strikes at once
@@ -7458,9 +7636,8 @@ module rl_spirits
    integer  :: ox(MAXSTRAIN) = 0, oy(MAXSTRAIN) = 0   ! where each strain began
    real(dp) :: etab(0:16) = 0                 ! exp(-d/w) for Hamming distance d
    real(dp) :: hz(MAXSTRAIN) = 0              ! chance per tick that the illness kills
-   real(dp) :: acc(4, MAXSTRAIN) = 0          ! sums for the circular-mean centres
+   real(dp) :: acc(2, MAXSTRAIN) = 0          ! summed columns and rows of the infected (centres)
    integer  :: kbits(0:15, MAXSTRAIN) = 0     ! key bits of the infections, for the majority
-   real(dp), allocatable :: cphi(:), sphi(:), cpsi(:), spsi(:)   ! cell angles around the torus
 
    ! ================================================================ the awe
    integer(i2), allocatable :: devot(:,:)     ! awe updates the site has spent reverent (it fades)
@@ -7494,8 +7671,8 @@ contains
          0.15d0, 0.9d0, 'Share of the land of a 9x9 patch that one people must fill before a '// &
          'strain keyed to its rule can arise there: the plague kills the winner.', ui=.true.)
       P_SPILL = reg_param('spillover', 'Spillover chance', 'Plague', 0.03d0, 0d0, 0.5d0, &
-         'Chance that a crowded cell, among the 16 examined every 16 ticks, gives rise to a '// &
-         'new strain.', ui=.false.)
+         'Chance that a crowded cell, among the few examined every 16 ticks (16 for every '// &
+         '384x192 cells of the world), gives rise to a new strain.', ui=.false.)
       P_KEYW = reg_param('keywidth', 'Strain specificity (bits)', 'Plague', 1.5d0, 0.3d0, 6d0, &
          'Transmission falls as exp(-d/w) with the Hamming distance d between a strain''s key '// &
          'and the rule of the one it would infect.', ui=.false.)
@@ -7523,26 +7700,17 @@ contains
 
    subroutine spirits_init()
       ! a world with no plague and no belief yet: every strain slot free
-      integer :: i, j
       if (P_CONTAGION == 0) call spirits_params()
       if (allocated(pkey)) then
          if (size(pkey, 1) /= NX .or. size(pkey, 2) /= NY) then
-            deallocate(pkey, mark, devot, holy, wrk, wrk2, ilist, cand, newc, news, newk, &
-                       cphi, sphi, cpsi, spsi)
+            deallocate(pkey, mark, devot, holy, wrk, wrk2, ilist, cand, newc, news, newk)
          end if
       end if
       if (.not. allocated(pkey)) then
          allocate(pkey(NX,NY), mark(NX,NY), devot(NX,NY), holy(NX,NY), wrk(NX,NY), wrk2(NX,NY))
          allocate(ilist(NX*NY), cand(NX*NY), newc(NX*NY), news(NX*NY), newk(NX*NY))
-         allocate(cphi(NX), sphi(NX), cpsi(NY), spsi(NY))
       end if
       if (.not. allocated(pdead)) allocate(pdead(0:65535), tally(0:2,0:65535), touched(65536))
-      do i = 1, NX
-         cphi(i) = cos(TWOPI*(i - 0.5d0)/NX);  sphi(i) = sin(TWOPI*(i - 0.5d0)/NX)
-      end do
-      do j = 1, NY
-         cpsi(j) = cos(TWOPI*(j - 0.5d0)/NY);  spsi(j) = sin(TWOPI*(j - 0.5d0)/NY)
-      end do
       sick = 0;  strain = 0;  awe = 0
       strains = strain_t();  nstrain = 0;  n_sick = 0;  plague_hist = 0;  awe_mag = 0
       pkey = 0;  mark = 0;  devot = 0;  holy = 0;  pdead = 0;  tally = 0
@@ -7672,7 +7840,7 @@ contains
       ! drawn in proportion to p.  All at once, from the state at the start of
       ! the tick, and independent of the order the cells are visited in.
       integer, intent(out) :: nnew
-      integer  :: e, c, nc, i, j, k, m, nsrc, r, key, ni(8), nj(8), src(8)
+      integer  :: e, c, nc, i, j, k, m, nm, nsrc, r, key, ni(8), nj(8), src(8)
       real(dp) :: p(8), q, pt, u, b0
       integer(i8) :: kc, kw, kd, kb
       do k = 0, 16
@@ -7682,8 +7850,8 @@ contains
       nc = 0
       do e = 1, nlist
          i = iand(ilist(e), 65535);  j = ishft(ilist(e), -16)
-         call moore(i, j, ni, nj)
-         do k = 1, 8
+         call moore(i, j, ni, nj, nm)
+         do k = 1, nm
             if (alive(ni(k),nj(k)) == 0) cycle
             if (sick(ni(k),nj(k)) /= 0 .or. mark(ni(k),nj(k)) /= 0) cycle
             mark(ni(k),nj(k)) = 1
@@ -7696,9 +7864,9 @@ contains
          i = iand(cand(c), 65535);  j = ishft(cand(c), -16)
          mark(i,j) = 0
          r = iand(gene(i,j), 65535)
-         call moore(i, j, ni, nj)
+         call moore(i, j, ni, nj, nm)
          q = 1;  pt = 0;  nsrc = 0
-         do k = 1, 8
+         do k = 1, nm
             if (sick(ni(k),nj(k)) <= 0) cycle
             nsrc = nsrc + 1;  src(nsrc) = k
             p(nsrc) = min(1d0, b0*strains(strain(ni(k),nj(k)))%beta* &
@@ -7780,12 +7948,13 @@ contains
 
    subroutine records()
       ! the strain records: the ill now and at the peak; every 4 ticks the centre
-      ! and the drifted key (a bitwise majority of the infections).  Outbreaks
-      ! that took hold are announced, and those that burnt out go in the books.
-      integer :: e, i, j, s, b, nt
-      logical :: full
+      ! (the case nearest the mean place of the sick, so that it always stands on
+      ! their land) and the drifted key (a bitwise majority of the infections).
+      ! Outbreaks that took hold are announced, and those that burnt out go in the books.
+      integer  :: e, i, j, s, b, near(MAXSTRAIN)
+      real(dp) :: d2, dmin(MAXSTRAIN)
+      logical  :: full
       full = mod(tick, 4_i8) == 0
-      nt = max(16, nint(TOLD_AT*real(NX, dp)*NY/(384*192)))
       do s = 1, nstrain
          if (strains(s)%state /= 1) cycle
          strains(s)%ninf = 0
@@ -7798,27 +7967,36 @@ contains
          s = strain(i,j)
          strains(s)%ninf = strains(s)%ninf + 1
          if (full) then
-            acc(1,s) = acc(1,s) + cphi(i);  acc(2,s) = acc(2,s) + sphi(i)
-            acc(3,s) = acc(3,s) + cpsi(j);  acc(4,s) = acc(4,s) + spsi(j)
+            acc(1,s) = acc(1,s) + i;  acc(2,s) = acc(2,s) + j
             do b = 0, 15
                if (btest(pkey(i,j), b)) kbits(b,s) = kbits(b,s) + 1
             end do
          end if
       end do
+      if (full) then
+         near = 0;  dmin = huge(1d0)
+         do e = 1, nlist
+            i = iand(ilist(e), 65535);  j = ishft(ilist(e), -16)
+            s = strain(i,j)
+            d2 = (i - acc(1,s)/strains(s)%ninf)**2 + (j - acc(2,s)/strains(s)%ninf)**2
+            if (d2 < dmin(s)) then
+               dmin(s) = d2;  near(s) = ilist(e)
+            end if
+         end do
+      end if
       n_raging = 0
       do s = 1, nstrain
          if (strains(s)%state /= 1) cycle
          associate (st => strains(s))
             st%peak = max(st%peak, st%ninf)
             if (full .and. st%ninf > 0) then
-               st%cx = real(circ(acc(1,s), acc(2,s), NX), sp)
-               st%cy = real(circ(acc(3,s), acc(4,s), NY), sp)
+               st%cx = real(iand(near(s), 65535), sp);  st%cy = real(ishft(near(s), -16), sp)
                do b = 0, 15
                   if (2*kbits(b,s) > st%ninf) st%key = ibset(st%key, b)
                   if (2*kbits(b,s) < st%ninf) st%key = ibclr(st%key, b)
                end do
             end if
-            if (.not. told(s) .and. st%total >= nt) then
+            if (.not. told(s) .and. st%total >= TOLD_AT) then   ! the same size of outbreak on any board
                told(s) = .true.
                call post(EV_PLAGUE, x=ox(s), y=oy(s), a=s, b=st%host, v=real(st%lethal, dp), &
                          s='crowding')
@@ -7838,16 +8016,18 @@ contains
    end subroutine records
 
    subroutine emergence()
-      ! Crowding breeds plague: NTEST random live cells are examined, and where
-      ! one people fills more than 'crowding' of the land of the 9x9 window
-      ! about one of them, a strain keyed to its rule arises with chance
-      ! 'spillover', its first case that very cell -- unless a strain within a
-      ! bit of that rule already rages, or too many do
-      integer  :: t, tries, i, j, r, s
+      ! Crowding breeds plague: a few random live cells are examined (NTEST for
+      ! every 384 x 192 cells of board, so a big world breeds as many plagues for
+      ! each of its peoples), and where one people fills more than 'crowding' of
+      ! the land of the 9x9 window about one of them, a strain keyed to its rule
+      ! arises with chance 'spillover', its first case that very cell -- unless a
+      ! strain within a bit of that rule already rages, or too many do
+      integer  :: t, tries, i, j, r, s, nt
       real(dp) :: d
       crowd_max = 0
+      nt = max(NTEST, nint(NTEST*real(NX, dp)*NY/(384*192)))
       t = 0;  tries = 0
-      do while (t < NTEST .and. tries < 64*NTEST)
+      do while (t < nt .and. tries < 64*nt)
          tries = tries + 1
          i = irnd(NX);  j = irnd(NY)
          if (alive(i,j) == 0) cycle
@@ -7867,14 +8047,16 @@ contains
 
    real(dp) function crowding(i, j, r)
       ! how crowded rule r is about (i,j): its live cells over the land cells
-      ! of the 9x9 window (counted as at least half the window)
+      ! of the 9x9 window (counted as at least half the window; beyond the edge
+      ! of the world there is no land)
       integer, intent(in) :: i, j, r
       integer :: di, dj, ii, jj, ns, nl
       ns = 0;  nl = 0
       do dj = -CROWD_W, CROWD_W
-         jj = wrapj(j + dj)
+         jj = j + dj
          do di = -CROWD_W, CROWD_W
-            ii = wrapi(i + di)
+            ii = i + di
+            if (.not. onmap(ii, jj)) cycle
             if (land(ii,jj) >= 1) nl = nl + 1
             if (alive(ii,jj) == 0) cycle
             if (iand(gene(ii,jj), 65535) == r) ns = ns + 1
@@ -7959,7 +8141,8 @@ contains
          do di = -rad, rad
             d2 = di*di + dj*dj
             if (d2 >= best .or. d2 > rad*rad) cycle
-            ii = wrapi(c%x + di);  jj = wrapj(c%y + dj)
+            ii = c%x + di;  jj = c%y + dj
+            if (.not. onmap(ii, jj)) cycle
             if (alive(ii,jj) /= 0) then
                best = d2;  i0 = ii;  j0 = jj
             end if
@@ -7973,7 +8156,8 @@ contains
          do di = -rad, rad
             d2 = di*di + dj*dj
             if (d2 > rad*rad) cycle
-            ii = wrapi(i0 + di);  jj = wrapj(j0 + dj)
+            ii = i0 + di;  jj = j0 + dj
+            if (.not. onmap(ii, jj)) cycle
             if (alive(ii,jj) == 0 .or. sick(ii,jj) > 0) cycle
             if (iand(gene(ii,jj), 65535) /= r) cycle
             if (n == NFEW) then
@@ -8013,10 +8197,11 @@ contains
       rad = ceiling(reach*rr)
       s2 = 2*(width*rr)**2
       do dj = -rad, rad
-         jj = wrapj(y + dj)
+         jj = y + dj
          do di = -rad, rad
             if (di*di + dj*dj > rad*rad) cycle
-            ii = wrapi(x + di)
+            ii = x + di
+            if (.not. onmap(ii, jj)) cycle
             if (alive(ii,jj) == 0) cycle
             if (urand() < strength*exp(-(di*di + dj*dj)/s2)) awe(ii,jj) = int(sgn, i1)
          end do
@@ -8111,38 +8296,30 @@ contains
 
    real(dp) function spirits_awe_walls() result(w)
       ! the share of neighbouring pairs of believers that disagree: the density
-      ! of domain walls, about one over the size of a domain
-      integer :: i, j, a, c, js, npr, nw
+      ! of domain walls, about one over the size of a domain (each pair counted
+      ! once, from its western or southern cell; none reaches past the edge)
+      integer :: i, j, a, npr, nw
       npr = 0;  nw = 0
       do j = 1, NY
-         js = jp(j)
          do i = 1, NX
             a = awe(i,j)
             if (a == 0) cycle
-            c = awe(ip(i),j)
-            if (c /= 0) then
-               npr = npr + 1
-               if (c /= a) nw = nw + 1
-            end if
-            c = awe(im(i),js)
-            if (c /= 0) then
-               npr = npr + 1
-               if (c /= a) nw = nw + 1
-            end if
-            c = awe(i,js)
-            if (c /= 0) then
-               npr = npr + 1
-               if (c /= a) nw = nw + 1
-            end if
-            c = awe(ip(i),js)
-            if (c /= 0) then
-               npr = npr + 1
-               if (c /= a) nw = nw + 1
-            end if
+            if (i < NX) call pair(awe(i+1,j))
+            if (j == NY) cycle
+            if (i > 1) call pair(awe(i-1,j+1))
+            call pair(awe(i,j+1))
+            if (i < NX) call pair(awe(i+1,j+1))
          end do
       end do
       w = 0
       if (npr > 0) w = real(nw, dp)/npr
+   contains
+      subroutine pair(c)
+         integer(i1), intent(in) :: c
+         if (c == 0) return
+         npr = npr + 1
+         if (c /= a) nw = nw + 1
+      end subroutine pair
    end function spirits_awe_walls
 
    subroutine census()
@@ -8185,8 +8362,9 @@ contains
       ! Once a year the devotion of every site fades by a sixteenth, and a 7x7
       ! patch where more than SHRINE_N sites are devout (reverent for five years,
       ! lately) becomes a shrine, whose field keeps the faith around it: at most
-      ! one new shrine in SHRINE_GAP years, none within SHRINE_D cells of another
-      integer :: i, j, d, ia, ib, ja, jb, best, bi, bj, r
+      ! one new shrine in SHRINE_GAP years, none within SHRINE_D cells of another,
+      ! and none out in the World's Edge.  Beyond the edge nothing is devout.
+      integer :: i, j, d, best, bi, bj, r
       devot = devot - devot/16_i2
       if (nshrine >= MAXSHRINE) return
       if (nshrine > 0) then
@@ -8194,28 +8372,31 @@ contains
       end if
       do j = 1, NY                            ! devout sites in 7 columns ...
          wrk(1,j) = 0
-         do d = -3, 3
-            if (devot(wrapi(1 + d),j) >= DEVOUT) wrk(1,j) = wrk(1,j) + 1
+         do d = 0, 3
+            if (devot(1 + d,j) >= DEVOUT) wrk(1,j) = wrk(1,j) + 1
          end do
          do i = 2, NX
-            ia = i + 3;  if (ia > NX) ia = ia - NX
-            ib = i - 4;  if (ib < 1) ib = ib + NX
             wrk(i,j) = wrk(i-1,j)
-            if (devot(ia,j) >= DEVOUT) wrk(i,j) = wrk(i,j) + 1
-            if (devot(ib,j) >= DEVOUT) wrk(i,j) = wrk(i,j) - 1
+            if (i + 3 <= NX) then
+               if (devot(i + 3,j) >= DEVOUT) wrk(i,j) = wrk(i,j) + 1
+            end if
+            if (i - 4 >= 1) then
+               if (devot(i - 4,j) >= DEVOUT) wrk(i,j) = wrk(i,j) - 1
+            end if
          end do
       end do
       wrk2(:,1) = 0                           ! ... and in 7 rows of those
-      do d = -3, 3
-         wrk2(:,1) = wrk2(:,1) + wrk(:,wrapj(1 + d))
+      do d = 0, 3
+         wrk2(:,1) = wrk2(:,1) + wrk(:,1 + d)
       end do
       do j = 2, NY
-         ja = wrapj(j + 3);  jb = wrapj(j - 4)
-         wrk2(:,j) = wrk2(:,j-1) + wrk(:,ja) - wrk(:,jb)
+         wrk2(:,j) = wrk2(:,j-1)
+         if (j + 3 <= NY) wrk2(:,j) = wrk2(:,j) + wrk(:,j + 3)
+         if (j - 4 >= 1) wrk2(:,j) = wrk2(:,j) - wrk(:,j - 4)
       end do
       best = SHRINE_N;  bi = 0;  bj = 0
-      do j = 1, NY
-         do i = 1, NX
+      do j = 1 + RIMW, NY - RIMW
+         do i = 1 + RIMW, NX - RIMW
             if (wrk2(i,j) <= best) cycle
             if (near_shrine(i, j, SHRINE_D)) cycle
             best = wrk2(i,j);  bi = i;  bj = j
@@ -8226,7 +8407,8 @@ contains
       shrine_x(nshrine) = bi;  shrine_y(nshrine) = bj;  shrine_t(nshrine) = tick
       do j = -SHRINE_R, SHRINE_R
          do i = -SHRINE_R, SHRINE_R
-            if (i*i + j*j <= SHRINE_R*SHRINE_R) holy(wrapi(bi + i), wrapj(bj + j)) = 1
+            if (i*i + j*j > SHRINE_R*SHRINE_R) cycle
+            if (onmap(bi + i, bj + j)) holy(bi + i, bj + j) = 1
          end do
       end do
       r = commonest(bi, bj, 3)
@@ -8239,8 +8421,7 @@ contains
       integer :: k
       near_shrine = .false.
       do k = 1, nshrine
-         if (dxwrap(real(i - shrine_x(k), dp))**2 + dywrap(real(j - shrine_y(k), dp))**2 &
-             <= d*d) near_shrine = .true.
+         if ((i - shrine_x(k))**2 + (j - shrine_y(k))**2 <= d*d) near_shrine = .true.
       end do
    end function near_shrine
 
@@ -8252,8 +8433,9 @@ contains
       n = 0
       do k = -h, h
          do m = -h, h
-            if (alive(wrapi(i0 + m), wrapj(j0 + k)) == 0) cycle
-            n = n + 1;  rl(n) = iand(gene(wrapi(i0 + m), wrapj(j0 + k)), 65535)
+            if (.not. onmap(i0 + m, j0 + k)) cycle
+            if (alive(i0 + m, j0 + k) == 0) cycle
+            n = n + 1;  rl(n) = iand(gene(i0 + m, j0 + k), 65535)
          end do
       end do
       r = -1;  best = 0
@@ -8297,23 +8479,25 @@ contains
 
    ! ================================================================ small helpers
 
-   pure subroutine moore(i, j, ni, nj)
-      ! the eight neighbours of (i,j) on the torus
+   pure subroutine moore(i, j, ni, nj, n)
+      ! the n neighbours of (i,j) on the board: eight, fewer at the edge of the world
       integer, intent(in)  :: i, j
-      integer, intent(out) :: ni(8), nj(8)
-      ni = [im(i), i, ip(i), im(i), ip(i), im(i), i, ip(i)]
-      nj = [jm(j), jm(j), jm(j), j, j, jp(j), jp(j), jp(j)]
+      integer, intent(out) :: ni(8), nj(8), n
+      integer :: di, dj
+      if (i > 1 .and. i < NX .and. j > 1 .and. j < NY) then
+         n = 8
+         ni = [i - 1, i, i + 1, i - 1, i + 1, i - 1, i, i + 1]
+         nj = [j - 1, j - 1, j - 1, j, j, j + 1, j + 1, j + 1]
+         return
+      end if
+      n = 0
+      do dj = -1, 1
+         do di = -1, 1
+            if ((di == 0 .and. dj == 0) .or. .not. onmap(i + di, j + dj)) cycle
+            n = n + 1;  ni(n) = i + di;  nj(n) = j + dj
+         end do
+      end do
    end subroutine moore
-
-   pure real(dp) function circ(c, s, n)
-      ! the cell coordinate (0.5 .. n+0.5) of a circular mean with sums c, s
-      real(dp), intent(in) :: c, s
-      integer,  intent(in) :: n
-      real(dp) :: a
-      a = atan2(s, c)
-      if (a < 0) a = a + TWOPI
-      circ = a*n/TWOPI + 0.5d0
-   end function circ
 
 end module rl_spirits
 
@@ -8371,6 +8555,12 @@ module rl_fauna
    real(sp), parameter :: FOOD0 = 0.5         ! stomach of a hatchling
    real(sp), parameter :: PUSH_W = 1.5        ! the Hand's wind: steering weight ...
    real(sp), parameter :: PUSH_V = 0.3        ! ... and drift, cells per tick
+   real(sp), parameter :: EDGE_B = 8          ! within this many cells of the edge of the world ...
+   real(sp), parameter :: EDGE_W = 3          ! ... fliers turn back, this hard at the very edge,
+                                              ! and no wind carries them further out
+   real(sp), parameter :: EDGE_S = 48         ! over the open sea they make for the land within
+   real(sp), parameter :: SEA_W = 2           ! ... this many cells of the edge, this hard at it
+   real(sp), parameter :: EDGE_IN = 1e-3      ! a position stays this far inside the far edges
    real(sp), parameter :: E_SPROUT = 0.45     ! energy of a cell sprung from pollen ...
    real(sp), parameter :: V_SPROUT = 0.04     ! ... and the verdure it takes from the soil
    integer,  parameter :: GREG_TICKS = 3      ! crowded this long: gregarious
@@ -8384,8 +8574,13 @@ module rl_fauna
    integer,  parameter :: RSTEP = 104         ! period of Langton's highway
    integer,  parameter :: NROAD = 5           ! equal windows in a row that make a road
    integer,  parameter :: NSHORE = 16         ! shores remembered per Titan
+   integer,  parameter :: RIM_GAP = 4096      ! steps a Titan walks, after it wakes or meets the
+                                              ! World's Edge, before the Edge counts as met (the
+                                              ! second time, it lies down there)
    real(dp), parameter :: AREA0 = 73728       ! cells of the medium board (thresholds scale)
    real(dp), parameter :: ITCZ = 0.5          ! the wind bands follow the sun by this much (climate's)
+   real(dp), parameter :: VPOLE = 15*DEG      ! the north-south wind dies away over this much
+                                              ! latitude before a pole (climate's)
    character(len=12), parameter :: TRULES(6) = [character(len=12) :: 'RL', 'RLR', 'LLRR', &
       'LRRRRRLLR', 'RRLLLRLLLRRR', 'LLRRRLRLRLLR']
 
@@ -8412,7 +8607,7 @@ module rl_fauna
    real(sp), allocatable :: px(:), py(:), pc(:), ps(:), pg(:)
 
    ! ================================================================ Titans (beyond the core's)
-   integer  :: hux(0:NHIST-1, MAXTITAN) = 0, huy(0:NHIST-1, MAXTITAN) = 0   ! unwrapped walk
+   integer  :: hux(0:NHIST-1, MAXTITAN) = 0, huy(0:NHIST-1, MAXTITAN) = 0   ! its walk (ux, uy)
    integer  :: hn(MAXTITAN) = 0                      ! samples taken
    integer  :: tturn(0:15, MAXTITAN) = 0             ! quarter turns left on each furrow state
    integer  :: wx0(MAXTITAN) = 0, wy0(MAXTITAN) = 0  ! position at the last 104-step mark
@@ -8425,6 +8620,8 @@ module rl_fauna
    integer  :: nvis(MAXTITAN) = 0                    ! shores known: a cell on each landmass
    integer  :: visx(NSHORE, MAXTITAN) = 0, visy(NSHORE, MAXTITAN) = 0
    integer(i8) :: t_due(MAXTITAN) = -1               ! when it will fall asleep
+   integer  :: rimhits(MAXTITAN) = 0                 ! times it has met the World's Edge ...
+   integer(i8) :: st_rim(MAXTITAN) = 0               ! ... and its step count the last time
    logical  :: fell_once = .false.                   ! a natural star-fall has come
    integer, allocatable :: nat(:,:)                  ! natural landmasses (causeways excluded)
    integer  :: nat_cells = -1                        ! land == 1 cells when nat was made
@@ -8513,7 +8710,7 @@ contains
       nloc = 0;  n_greg = 0;  vicsek_phi = 0;  fauna_phi_local = 0
       titans = titan_t();  furrow = 0
       hn = 0;  streak = 0;  nroads = 0;  nvis = 0;  offland = .false.;  craised = 0
-      t_due = -1;  tturn = 0
+      t_due = -1;  tturn = 0;  rimhits = 0;  st_rim = 0
       swarming = .false.;  greg_peak = 0;  swarm_x = 0;  swarm_y = 0;  t_swarm = 0
       fell_once = .false.
       fauna_drops = 0;  fauna_drops_far = 0;  fauna_drops_sea = 0
@@ -8567,7 +8764,7 @@ contains
    end subroutine fauna_command
 
    subroutine fauna_msd(lags, msd, n, k)
-      ! Time-averaged mean-squared displacement of a Titan's unwrapped walk against lag, from
+      ! Time-averaged mean-squared displacement of a Titan's walk against lag, from
       ! its last NHIST samples (one per 64 steps): lags in steps, msd in cells^2, about 2 per
       ! octave; n of them filled.  k picks the Titan; by default the awake one with the
       ! longest record, else the one with the longest record.
@@ -8626,7 +8823,7 @@ contains
       integer :: a
       if (nloc == 0) return
       call crowd_scan(nloc, lx, ly, lco, lsi, lphase, 0.5_sp, 0.5_sp, real(NX, sp), &
-                      real(NY, sp), real(pv(P_RAD), sp), cnt, ng, vx, vy, ox, oy)
+                      real(NY, sp), real(pv(P_RAD), sp), .false., cnt, ng, vx, vy, ox, oy)
       if (.not. present(phil)) return
       do a = 1, nloc
          phil(a) = 0
@@ -8642,7 +8839,7 @@ contains
       if (nloc > 0) then
          call wind_bands()
          call crowd_scan(nloc, lx, ly, lco, lsi, lphase, 0.5_sp, 0.5_sp, real(NX, sp), &
-                         real(NY, sp), real(pv(P_RAD), sp), nn, ng, vx, vy, ox, oy)
+                         real(NY, sp), real(pv(P_RAD), sp), .false., nn, ng, vx, vy, ox, oy)
          call fly()
       else
          fauna_phi_local = 0
@@ -8678,16 +8875,19 @@ contains
 
    integer function release(i, j, n) result(m)
       ! the Hand looses a gregarious swarm of n at (i, j), about two to a cell, headings at random
+      ! (moved in from the edge of the world as far as the whole swarm needs)
       integer, intent(in) :: i, j, n
-      real(sp) :: rd, r, a, th
+      real(sp) :: rd, r, a, th, x0, y0
       rd = real(sqrt(n/(2*PI)), sp)
+      x0 = max(0.5_sp + rd, min(NX + 0.5_sp - rd, real(i, sp)))
+      y0 = max(0.5_sp + rd, min(NY + 0.5_sp - rd, real(j, sp)))
       m = 0
       do while (m < n .and. nloc < MAXLOCUST)
          r = rd*real(sqrt(urand()), sp)
          a = real(TWOPI*urand(), sp)
          th = real(TWOPI*urand(), sp)
          nloc = nloc + 1;  m = m + 1
-         call newborn(nloc, i + r*cos(a), j + r*sin(a), th, 0.6_sp, 1_i1)
+         call newborn(nloc, x0 + r*cos(a), y0 + r*sin(a), th, 0.6_sp, 1_i1)
       end do
    end function release
 
@@ -8702,7 +8902,7 @@ contains
       if (abs(a) > TWOPI + 0.01d0) a = a*DEG
       m = 0
       do k = 1, nloc
-         dx = dxwrap(real(lx(k) - i, dp));  dy = dywrap(real(ly(k) - j, dp))
+         dx = real(lx(k) - i, dp);  dy = real(ly(k) - j, dp)
          if (dx*dx + dy*dy > real(rad, dp)**2) cycle
          lwt(k) = 2*TPY;  lwa(k) = real(a, sp);  m = m + 1
       end do
@@ -8713,7 +8913,7 @@ contains
       integer,     intent(in) :: a
       real(sp),    intent(in) :: x, y, th, food
       integer(i1), intent(in) :: phase
-      lx(a) = wrapx(x);  ly(a) = wrapy(y)
+      lx(a) = clampx(x);  ly(a) = clampy(y)
       lth(a) = th;  lco(a) = cos(th);  lsi(a) = sin(th)
       lfood(a) = food;  lphase(a) = phase;  lclock(a) = 0;  lpollen(a) = 0
       lwt(a) = 0;  lwa(a) = 0;  lpx(a) = 0;  lpy(a) = 0;  lpm(a) = 0
@@ -8729,10 +8929,16 @@ contains
    end subroutine copy_loc
 
    subroutine fly()
-      ! steer, move, eat, carry pollen, change phase, die and split: one compacting pass
+      ! steer, move, eat, carry pollen, change phase, die and split: one compacting pass.
+      ! The world has an edge: within EDGE_B cells of it the fliers turn back and no wind
+      ! carries them further out, and one that reaches it all the same glances off it.
+      ! Over the open sea they make for the land when the edge is near (EDGE_S cells),
+      ! so that the trades do not strand a swarm out there to starve.
       integer  :: a, w, nb, i, j, k, crowd, nls
       real(sp) :: hun, vg, vs, ww, eat, wst, tbr, fcost, shy, rad, f, ax, ay, s, co, si, dx, dy, bite, gx, gy, x, y, th
+      real(sp) :: eu, ev, hu, hv
       real(dp) :: pdie, pick, drop, u1, u2, u3, lsum
+      logical  :: hit, sea
       call noise_tables()
       hun = real(pv(P_HUNGER), sp);  vg = real(pv(P_VGREG), sp);  vs = real(pv(P_VSOL), sp)
       ww = real(pv(P_WIND), sp);  eat = real(pv(P_EAT), sp);  wst = real(pv(P_STEER), sp)
@@ -8745,7 +8951,10 @@ contains
          i = cell_i(lx(a));  j = cell_j(ly(a))
          gx = 0.25*(verd(ip(ip(i)), j) - verd(im(im(i)), j))
          gy = 0.25*(verd(i, jp(jp(j))) - verd(i, jm(jm(j))))
-         ! where it wants to go: its neighbours' mean heading (or its own), food, the Hand's wind
+         eu = edge_ebb(lx(a), NX, wu(j));  ev = edge_ebb(ly(a), NY, wv(j))   ! no wind out of the world
+         sea = land(i,j) == 0
+         ! where it wants to go: its neighbours' mean heading (or its own), food, the Hand's wind,
+         ! and away from the edge of the world
          if (lphase(a) == 1) then
             s = sqrt(vx(a)**2 + vy(a)**2)
             if (ng(a) >= 2) then
@@ -8756,7 +8965,7 @@ contains
             else
                ax = lco(a);  ay = lsi(a)
             end if
-            ax = ax + hun*gx + wst*wu(j);  ay = ay + hun*gy + wst*wv(j)
+            ax = ax + hun*gx + wst*eu;  ay = ay + hun*gy + wst*ev
          else
             f = shy*min(1., 2*lfood(a))/rad          ! hunger overcomes shyness
             ax = lco(a) + 0.5*hun*gx - f*ox(a);  ay = lsi(a) + 0.5*hun*gy - f*oy(a)
@@ -8764,6 +8973,7 @@ contains
          if (lwt(a) > 0) then
             ax = ax + PUSH_W*cos(lwa(a));  ay = ay + PUSH_W*sin(lwa(a))
          end if
+         ax = ax + edge_turn(lx(a), NX, sea);  ay = ay + edge_turn(ly(a), NY, sea)
          s = sqrt(ax*ax + ay*ay)
          if (s > 1e-6) then
             ax = ax/s;  ay = ay/s
@@ -8775,20 +8985,24 @@ contains
          if (lphase(a) == 1) then
             co = ax*tgc(k) - ay*tgs(k);  si = ax*tgs(k) + ay*tgc(k)
             th = atan2(ay, ax) + tga(k)
-            dx = vg*co + ww*wu(j);  dy = vg*si + ww*wv(j)
+            hu = 0;  hv = 0
             if (lwt(a) > 0) then
-               dx = dx + PUSH_V*cos(lwa(a));  dy = dy + PUSH_V*sin(lwa(a))
+               hu = edge_ebb(lx(a), NX, PUSH_V*cos(lwa(a)));  hv = edge_ebb(ly(a), NY, PUSH_V*sin(lwa(a)))
             end if
+            dx = vg*co + ww*eu + hu;  dy = vg*si + ww*ev + hv
          else
             co = ax*tsc(k) - ay*tss(k);  si = ax*tss(k) + ay*tsc(k)
             th = atan2(ay, ax) + tsa(k)
             dx = vs*co;  dy = vs*si
-            if (land(cell_i(wrapx(lx(a) + dx)), cell_j(wrapy(ly(a) + dy))) == 0) then
+            if (land(cell_i(lx(a) + dx), cell_j(ly(a) + dy)) == 0) then
                dx = 0;  dy = 0;  co = -co;  si = -si;  th = th + real(PI, sp)
             end if
          end if
          if (lwt(a) > 0) lwt(a) = lwt(a) - 1
-         x = wrapx(lx(a) + dx);  y = wrapy(ly(a) + dy)
+         x = lx(a) + dx;  y = ly(a) + dy               ! the edge of the world: they glance off it
+         hit = .false.
+         call bounce(x, co, NX, hit);  call bounce(y, si, NY, hit)
+         if (hit) th = atan2(si, co)
          lx(a) = x;  ly(a) = y
          lth(a) = th - real(TWOPI, sp)*anint(th/real(TWOPI, sp))
          lco(a) = co;  lsi(a) = si
@@ -8868,7 +9082,7 @@ contains
       do m = 1, 3
          u(m) = real(urand(), sp) - 0.5
       end do
-      lx(a) = wrapx(lx(a) + 0.6*u(1));  ly(a) = wrapy(ly(a) + 0.6*u(2))
+      lx(a) = clampx(lx(a) + 0.6*u(1));  ly(a) = clampy(ly(a) + 0.6*u(2))
       lth(a) = lth(a) + 0.6*u(3);  lco(a) = cos(lth(a));  lsi(a) = sin(lth(a))
       lclock(a) = 0;  lpollen(a) = 0
    end subroutine offspring
@@ -8885,7 +9099,7 @@ contains
       call sprout(i, j, lpollen(a))
       call sprout(i2, j, lpollen(a))
       call sprout(i, j2, lpollen(a))
-      d = sqrt(dxwrap(real(i - lpx(a), dp))**2 + dywrap(real(j - lpy(a), dp))**2)
+      d = sqrt(real(i - lpx(a), dp)**2 + real(j - lpy(a), dp)**2)
       fauna_drops = fauna_drops + 1
       b = log2bin(max(1, nint(d)))
       fauna_pollen_hist(b) = fauna_pollen_hist(b) + 1
@@ -8899,8 +9113,10 @@ contains
    end subroutine drop_pollen
 
    logical function vacant(i, j)
-      ! can a pollen seedling take root here?
+      ! can a pollen seedling take root here?  (never in the World's Edge)
       integer, intent(in) :: i, j
+      vacant = .false.
+      if (inrim(i, j)) return
       vacant = land(i,j) >= 1 .and. ice(i,j) < 0 .and. alive(i,j) == 0 .and. doom(i,j) == 0
    end function vacant
 
@@ -8989,7 +9205,7 @@ contains
       sx = 0;  sy = 0;  m = 0
       do a = 1, nloc
          if (lphase(a) /= 1) cycle
-         dx = dxwrap(lx(a) - x0);  dy = dywrap(ly(a) - y0)
+         dx = lx(a) - x0;  dy = ly(a) - y0
          if (abs(dx) > 16 .or. abs(dy) > 16) cycle
          sx = sx + dx;  sy = sy + dy;  m = m + 1
       end do
@@ -9001,29 +9217,32 @@ contains
 
    subroutine wind_bands()
       ! the prevailing winds by row, as the climate's bands (band units, u east, v north):
-      ! trades at the outer equator, westerlies at mid-latitudes, reversed trades in the
-      ! shadow of the ring; narrow rows near the ring are crossed faster; they follow the sun
+      ! trades within thirty degrees of the equator, westerlies beyond, following the sun.
+      ! The north-south wind dies away over the last VPOLE before a pole, the top and
+      ! bottom edges of the world, so that no wind blows into them.
       real(dp) :: sh, th
       integer  :: j
       sh = ITCZ*tilt*sin(TWOPI*season_frac())
       do j = 1, NY
-         th = theta_of(j) - sh
-         wu(j) = real(-cos(3*th)*RR/(RR + cos(theta_of(j))), sp)
-         wv(j) = real(-0.3d0*sin(3*th), sp)
+         th = theta_of(j)
+         wu(j) = real(-cos(3*(th - sh)), sp)
+         wv(j) = real(-0.3d0*sin(3*(th - sh))*min(1d0, max(0d0, (PI/2 - abs(th))/VPOLE)), sp)
       end do
    end subroutine wind_bands
 
    ! ================================================================ the cell list
 
-   subroutine crowd_scan(n, x, y, hc, hs, g, x0, y0, wx, wy, rad, cn, cg, sx, sy, ox, oy)
-      ! Neighbours on a periodic wx x wy box with corner (x0, y0), by a cell list: for every
-      ! agent the others within rad (cn), the gregarious ones among them and itself (cg), the
-      ! sum of their unit headings (sx, sy) and the sum of the offsets to the others (ox, oy).
+   subroutine crowd_scan(n, x, y, hc, hs, g, x0, y0, wx, wy, rad, periodic, cn, cg, sx, sy, ox, oy)
+      ! Neighbours in a wx x wy box with corner (x0, y0), by a cell list: for every agent the
+      ! others within rad (cn), the gregarious ones among them and itself (cg), the sum of
+      ! their unit headings (sx, sy) and the sum of the offsets to the others (ox, oy).
       ! Agents are counting-sorted into bins of at least 4 x 4 cells (and at least rad), so
       ! the 3 x 3 block around a bin holds every neighbour;
-      ! the block is gathered once per bin, unwrapped, and swept by all the bin's agents.
+      ! the block is gathered once per bin and swept by all the bin's agents.  A periodic box
+      ! (the labs) wraps the block round, unwrapped; the world has edges and does not.
       integer,     intent(in)  :: n
       real(sp),    intent(in)  :: x(:), y(:), hc(:), hs(:), x0, y0, wx, wy, rad
+      logical,     intent(in)  :: periodic
       integer(i1), intent(in)  :: g(:)
       integer,     intent(out) :: cn(:), cg(:)
       real(sp),    intent(out) :: sx(:), sy(:), ox(:), oy(:)
@@ -9057,17 +9276,23 @@ contains
             m = 0
             do ddy = -1, 1
                cy = by + ddy;  shy = 0
-               if (cy < 0) then
-                  cy = cy + nby;  shy = -wy
-               else if (cy >= nby) then
-                  cy = cy - nby;  shy = wy
+               if (cy < 0 .or. cy >= nby) then
+                  if (.not. periodic) cycle
+                  if (cy < 0) then
+                     cy = cy + nby;  shy = -wy
+                  else
+                     cy = cy - nby;  shy = wy
+                  end if
                end if
                do ddx = -1, 1
                   cx = bx + ddx;  shx = 0
-                  if (cx < 0) then
-                     cx = cx + nbx;  shx = -wx
-                  else if (cx >= nbx) then
-                     cx = cx - nbx;  shx = wx
+                  if (cx < 0 .or. cx >= nbx) then
+                     if (.not. periodic) cycle
+                     if (cx < 0) then
+                        cx = cx + nbx;  shx = -wx
+                     else
+                        cx = cx - nbx;  shx = wx
+                     end if
                   end if
                   c = cx + nbx*cy
                   do kk = kfirst(c), kfirst(c+1) - 1
@@ -9152,8 +9377,8 @@ contains
       g = merge(0_i1, 1_i1, mode == 1);  clk = 0
       s1 = 0;  s2 = 0;  sg = 0;  m = 0
       do t = 1, nsteps
-         call crowd_scan(nag, x, y, c, s, g, 0._sp, 0._sp, box, box, rad, cnl, cgl, sxl, syl, &
-                         oxl, oyl)
+         call crowd_scan(nag, x, y, c, s, g, 0._sp, 0._sp, box, box, rad, .true., cnl, cgl, &
+                         sxl, syl, oxl, oyl)
          tc = 0;  ts = 0;  ngr = 0
          do a = 1, nag
             if (g(a) == 1) then
@@ -9184,18 +9409,24 @@ contains
    ! ================================================================ Titans
 
    subroutine titans_step()
-      ! every awake Titan walks its stride; those whose vigil is over fall asleep
+      ! every awake Titan walks its stride; those whose vigil is over fall asleep, and so do
+      ! those that have come to the World's Edge a second time
       integer :: k, nstep
       nstep = max(1, nint(pv(P_STRIDE)))
       do k = 1, MAXTITAN
          if (titans(k)%state /= 1) cycle
          call walk(k, nstep)
-         if (tick >= t_due(k)) call titan_sleep(k)
+         if (tick >= t_due(k) .or. rimhits(k) >= 2) call titan_sleep(k)
       end do
    end subroutine titans_step
 
    subroutine walk(k, nstep)
-      ! nstep turmite steps of Titan k: read the furrow, turn, plough, step forward, tread
+      ! nstep turmite steps of Titan k: read the furrow, turn, plough, step forward, tread.
+      ! It never sets foot in the World's Edge: a step that would take it there is not
+      ! taken, and it turns about where it stands.  The ant is reversible, so it walks back
+      ! the way it came, unploughing its own road, and finds its way again.  The second time
+      ! it meets the Edge (each meeting RIM_GAP steps or more after it woke or last met it),
+      ! it stops, and lies down.
       integer, intent(in) :: k, nstep
       integer  :: n, s, L, x, y, d, ux, uy, x1, y1, road, raised, ddx, ddy
       integer(i8) :: st
@@ -9215,30 +9446,40 @@ contains
          x1 = x;  y1 = y
          select case (d)
          case (0)
-            x = ip(x);  ux = ux + 1
+            x = x + 1
          case (1)
-            y = jp(y);  uy = uy + 1
+            y = y + 1
          case (2)
-            x = im(x);  ux = ux - 1
+            x = x - 1
          case default
-            y = jm(y);  uy = uy - 1
+            y = y - 1
          end select
          st = st + 1
-         ! the tread: what lives here is trampled; the sea is raised into a causeway
-         if (alive(x, y) == 1) doom(x, y) = 1
-         if (land(x, y) /= 1) then
-            if (.not. offland(k)) then
-               offland(k) = .true.;  depx(k) = x1;  depy(k) = y1;  craised(k) = 0
+         if (x < 1 + RIMW .or. x > NX - RIMW .or. y < 1 + RIMW .or. y > NY - RIMW) then
+            x = x1;  y = y1;  d = iand(d + 2, 3)        ! the World's Edge: it turns about
+            if (st - st_rim(k) > RIM_GAP) then
+               rimhits(k) = rimhits(k) + 1;  st_rim(k) = st
+               if (rimhits(k) >= 2) exit
             end if
-            if (land(x, y) == 0 .and. pv(P_CWAY) > 0.5d0) then
-               land(x, y) = 2;  elev(x, y) = 4;  land_dirty = .true.
-               raised = raised + 1;  craised(k) = craised(k) + 1
+         else
+            ux = ux + (x - x1);  uy = uy + (y - y1)
+            ! the tread: what lives here is trampled; the sea is raised into a causeway
+            if (alive(x, y) == 1) doom(x, y) = 1
+            if (land(x, y) /= 1) then
+               if (.not. offland(k)) then
+                  offland(k) = .true.;  depx(k) = x1;  depy(k) = y1;  craised(k) = 0
+               end if
+               if (land(x, y) == 0 .and. pv(P_CWAY) > 0.5d0) then
+                  land(x, y) = 2;  elev(x, y) = 4;  land_dirty = .true.
+                  raised = raised + 1;  craised(k) = craised(k) + 1
+               end if
+            else if (offland(k)) then
+               offland(k) = .false.
+               call landfall(k, x, y)
             end if
-         else if (offland(k)) then
-            offland(k) = .false.
-            call landfall(k, x, y)
          end if
          ! the record of its walk, and the road: equal diagonal strides in 104-step windows
+         ! (only its first road is news; a Titan turned back by the Edge lays it again)
          if (mod(st, int(MSTEP, i8)) == 0) call sample(k, ux, uy)
          if (mod(st, int(RSTEP, i8)) == 0) then
             ddx = ux - wx0(k);  ddy = uy - wy0(k);  wx0(k) = ux;  wy0(k) = uy
@@ -9254,7 +9495,7 @@ contains
             wdx(k) = ddx;  wdy(k) = ddy
             if (road == 0 .and. streak(k) >= NROAD) then
                road = 1;  nroads(k) = nroads(k) + 1
-               call post(EV_ROAD, x=x, y=y, a=k, b=nroads(k), v=real(st, dp))
+               if (nroads(k) == 1) call post(EV_ROAD, x=x, y=y, a=k, b=nroads(k), v=real(st, dp))
             else if (road == 1 .and. streak(k) < NROAD) then
                road = 0
             end if
@@ -9266,7 +9507,7 @@ contains
    end subroutine walk
 
    subroutine sample(k, ux, uy)
-      ! one more point of Titan k's unwrapped walk
+      ! one more point of Titan k's walk (its displacement from where it woke)
       integer, intent(in) :: k, ux, uy
       integer :: m
       m = mod(hn(k), NHIST)
@@ -9340,7 +9581,8 @@ contains
          end do
       end if
       if (k == 0) return
-      i = wrapi(x);  j = wrapj(y)
+      i = min(NX - RIMW, max(1 + RIMW, x))    ! never in the World's Edge
+      j = min(NY - RIMW, max(1 + RIMW, y))
       titans(k) = titan_t()
       titans(k)%state = 1;  titans(k)%x = i;  titans(k)%y = j;  titans(k)%dir = irnd(4) - 1
       titans(k)%rule = clean_rule(rule);  titans(k)%nr = len_trim(titans(k)%rule)
@@ -9351,6 +9593,7 @@ contains
       t_due(k) = tick + nint((1 + urand())*pv(P_TYEARS)*TPY, i8)
       hn(k) = 0;  streak(k) = 0;  wdx(k) = 0;  wdy(k) = 0;  wx0(k) = 0;  wy0(k) = 0
       nroads(k) = 0;  craised(k) = 0;  nvis(k) = 0;  depx(k) = 0;  depy(k) = 0
+      rimhits(k) = 0;  st_rim(k) = 0
       if (land(i,j) == 0) then                ! risen from the sea, it stands on a causeway
          land(i,j) = 2;  elev(i,j) = 4;  land_dirty = .true.;  titans(k)%raised = 1
       end if
@@ -9444,9 +9687,10 @@ contains
             do while (h <= t)
                ci = mod(q(h) - 1, NX) + 1;  cj = (q(h) - 1)/NX + 1;  h = h + 1
                do dj = -1, 1
-                  nj = wrapj(cj + dj)
+                  nj = cj + dj
                   do di = -1, 1
-                     ni = wrapi(ci + di)
+                     ni = ci + di
+                     if (.not. onmap(ni, nj)) cycle
                      if (land(ni,nj) /= 1 .or. nat(ni,nj) /= 0) cycle
                      nat(ni,nj) = lab;  t = t + 1;  q(t) = ni + NX*(nj - 1)
                   end do
@@ -9468,18 +9712,62 @@ contains
       cell_j = min(NY, max(1, int(y + 0.5_sp)))
    end function cell_j
 
-   pure real(sp) function wrapx(x)
-      ! a position wrapped into 0.5 .. NX+0.5
+   pure real(sp) function clampx(x)
+      ! a position held on the board, 0.5 .. NX+0.5 (just inside the far edge)
       real(sp), intent(in) :: x
-      wrapx = modulo(x - 0.5_sp, real(NX, sp)) + 0.5_sp
-      if (wrapx >= NX + 0.5_sp) wrapx = 0.5_sp
-   end function wrapx
+      clampx = max(0.5_sp, min(NX + 0.5_sp - EDGE_IN, x))
+   end function clampx
 
-   pure real(sp) function wrapy(y)
+   pure real(sp) function clampy(y)
       real(sp), intent(in) :: y
-      wrapy = modulo(y - 0.5_sp, real(NY, sp)) + 0.5_sp
-      if (wrapy >= NY + 0.5_sp) wrapy = 0.5_sp
-   end function wrapy
+      clampy = max(0.5_sp, min(NY + 0.5_sp - EDGE_IN, y))
+   end function clampy
+
+   pure real(sp) function edge_turn(p, n, sea)
+      ! the pull back from the edge of the world along an axis of n cells, at position p:
+      ! nothing further in than EDGE_B cells, rising to EDGE_W at the very edge; and over
+      ! the open sea a longer pull toward the land, from EDGE_S cells out, rising to SEA_W
+      real(sp), intent(in) :: p
+      integer,  intent(in) :: n
+      logical,  intent(in) :: sea
+      edge_turn = pull(p - 0.5_sp) - pull(n + 0.5_sp - p)
+   contains
+      pure real(sp) function pull(d)
+         real(sp), intent(in) :: d
+         pull = EDGE_W*max(0._sp, 1 - max(0._sp, d)/EDGE_B)
+         if (sea) pull = pull + SEA_W*max(0._sp, 1 - max(0._sp, d)/EDGE_S)
+      end function pull
+   end function edge_turn
+
+   pure real(sp) function edge_ebb(p, n, w)
+      ! a wind w along an axis of n cells, at position p: one that blows toward an edge
+      ! less than EDGE_B cells off dies away with the distance left, to nothing at the edge
+      real(sp), intent(in) :: p, w
+      integer,  intent(in) :: n
+      real(sp) :: d
+      if (w < 0) then
+         d = p - 0.5_sp
+      else
+         d = n + 0.5_sp - p
+      end if
+      edge_ebb = w*min(1._sp, max(0._sp, d/EDGE_B))
+   end function edge_ebb
+
+   pure subroutine bounce(p, c, n, hit)
+      ! a flier carried past the edge of an axis of n cells glances off it: its position
+      ! is mirrored back onto the board and its heading along the axis turned inward
+      real(sp), intent(inout) :: p, c
+      integer,  intent(in)    :: n
+      logical,  intent(inout) :: hit
+      real(sp) :: hi
+      hi = n + 0.5_sp
+      if (p < 0.5_sp) then
+         p = 1 - p;  c = abs(c);  hit = .true.
+      else if (p > hi) then
+         p = 2*hi - p;  c = -abs(c);  hit = .true.
+      end if
+      p = max(0.5_sp, min(hi - EDGE_IN, p))
+   end subroutine bounce
 
 end module rl_fauna
 
@@ -9528,6 +9816,9 @@ module rl_polity
       integer :: fx = 0, fy = 0               ! the middle of the front (cells)
       integer :: outcome = 0                  ! at the peace: 1 a won, -1 b won, 0 status quo
       integer(i8) :: t0 = -1, t1 = -1
+      integer(i8) :: t_last = -1              ! tick of its last battle (-1: none yet)
+      integer :: last_win = 0                 ! the realm that won it
+      integer :: last_slain = 0               ! cells slain in it, both sides
    end type warrec_t
    type(warrec_t), public :: wrec(MAXWREC)
    integer, public :: nwrec = 0               ! records used
@@ -9572,14 +9863,24 @@ module rl_polity
                                                       ! the bent of a ruler, by government
    real(dp), parameter :: FHOT = 30                   ! border deaths a year that make hatred
    integer(i8), parameter :: LONGAGO = -100000000_i8  ! "never", for times of last deeds
+   ! A region is some 700 land cells on every board, so the numbers above and below count
+   ! cells per region, per border or per battle and do not grow with the board: a bigger
+   ! world holds more realms, not emptier ones.
+   real(dp), parameter :: CONTACTD = 150              ! seats nearer than this know each other (cells)
+   integer,  parameter :: MAXSANC = 3                 ! realms that sanction one aggressor, at most
+   integer,  parameter :: NEWS_SLAIN = 3              ! cells slain that make a battle news
+   real(sp), parameter :: HEAT_BATTLE = 1, HEAT_BORDER = 0.3   ! bloodshed a cell slain leaves
+   real(sp), parameter :: HEAT_KEEP = 0.85            ! ... and what of it is left at each census
 
    ! ================================================================ state
-   real(dp) :: sc = 1                                 ! board area / medium board area
    integer  :: nstand = 0                             ! realms standing
    integer,  allocatable :: ripe(:), lowpop(:)        ! per region: councils ripe; nearly empty
    integer,  allocatable :: rfirst(:), rcells(:)      ! the cells of each region (i + NX*(j-1))
    integer,  allocatable :: ord(:)                    ! a random order of the regions
-   integer(i1), allocatable :: dmap(:,:), tense(:,:)  ! BFS distances; near a tense border
+   integer,  allocatable :: wcomp(:)                  ! per region: its water (sea regions joined), 0 land
+   integer  :: nwat = 0                               ! waters
+   logical,  allocatable :: wtouch(:,:)               ! wtouch(c, p): realm p has a harbour on water c
+   integer(i1), allocatable :: dmap(:,:)              ! BFS distances
    integer(i1), allocatable :: nearr(:,:)             ! the other realm within BORDERD cells, 0: none
    integer,  allocatable :: qx(:), qy(:)              ! BFS queue
    integer  :: lastfail(MAXPOL) = 0, lastf(MAXPOL) = 0  ! failed prophecies of the state faith
@@ -9624,7 +9925,7 @@ contains
          'between peoples become domain walls: still in peace, burning on the fronts of war.', &
          ui=.true.)
       P_WAR    = reg_param('warlust', 'Appetite for war', 'Realms', 0.15d0, 0d0, 1d0, &
-         'Chance per council (twice a year) that a realm which hates a neighbour (relations '// &
+         'Chance per council (once a year) that a realm which hates a neighbour (relations '// &
          'below -55) and has a reason -- strength, faith, plunder, hunger, revenge -- '// &
          'declares war on it.', ui=.true.)
       P_CARN   = reg_param('carnage', 'Carnage of battle', 'Realms', 0.25d0, 0d0, 1d0, &
@@ -9636,7 +9937,7 @@ contains
       P_SIZE   = reg_param('realmsize', 'Governable size', 'Realms', 8d0, 2d0, 40d0, &
          'Regions a realm can hold before the burden of empire weighs on it.', ui=.false.)
       P_HATE   = reg_param('borderhate', 'Border hatred', 'Realms', 20d0, 1d0, 500d0, &
-         'Cells slain by xenophobia in the border zone of two realms in a year (medium board) '// &
+         'Cells slain by xenophobia in the border zone of two realms in a year '// &
          'that cost them half the most hatred a council can bring (15): steady killing on a '// &
          'border breeds rivalry, a massacre cannot do more than that.', logs=.true., ui=.false.)
       P_MEM    = reg_param('memory', 'Memory of nations', 'Realms', 0.97d0, 0.8d0, 0.999d0, &
@@ -9652,9 +9953,9 @@ contains
          'Chance per council, times its stability (doubled for kin), that a realm takes in a '// &
          'peopled free region next to it.', ui=.false.)
       P_FOUND  = reg_param('realmpop', 'Cells to found a realm', 'Realms', 40d0, 5d0, 500d0, &
-         'Living cells (medium board) a free region of one notable people needs, three '// &
-         'councils running, to become a realm.', ui=.false.)
-      P_MAXR   = reg_param('maxrealms', 'Most realms', 'Realms', 24d0, 2d0, 40d0, &
+         'Living cells a free region (some 700 cells of land) of one notable people needs, '// &
+         'three councils running, to become a realm.', ui=.false.)
+      P_MAXR   = reg_param('maxrealms', 'Most realms', 'Realms', 48d0, 2d0, real(MAXPOL, dp), &
          'Most realms that may stand at once.', ui=.false.)
       P_WEARY  = reg_param('weariness', 'War-weariness', 'Realms', 1d0, 0.1d0, 5d0, &
          'Multiplies the weariness a battle brings; a realm wearier than 0.6 sues for peace.', &
@@ -9676,9 +9977,9 @@ contains
       if (P_XENO == 0) call polity_params()
       if (.not. allocated(hostility)) call soc_alloc()
       if (nreg_s /= nregion .or. .not. allocated(rowner)) call soc_build(.false.)
-      sc = real(NX, dp)*NY/73728d0
       call work_check()
-      ripe = 0;  lowpop = 0;  tense = 0;  dmap = 0;  nearr = 0;  nstand = 0
+      call waters()
+      ripe = 0;  lowpop = 0;  tension = 0;  bheat = 0;  dmap = 0;  nearr = 0;  nstand = 0
       lastfail = 0;  lastf = 0;  nann = 0;  lostr = 0;  wonb = .false.;  unpaid = .false.
       setl = 0;  conqg = 0;  t_vic = LONGAGO;  t_elect = 0;  namec = 0;  lastk = 0
       office = 0;  frc = 0;  frate = 0;  pun = 0;  tann = -1;  tpend = 0;  s_until = 0
@@ -9690,13 +9991,17 @@ contains
    end subroutine polity_init
 
    subroutine polity_step()
-      ! every tick the deaths on the borders are counted; every 16 ticks the census; every
-      ! half year a battle in every war (in its campaigning season); once a year a council
+      ! every tick the deaths on the borders are counted; every 16 ticks the census, and the
+      ! embers of old fighting cool; once a year a battle in every war (in its campaigning
+      ! season) and a council
       logical :: cen
       if (purist) return
       if (P_XENO == 0 .or. .not. allocated(hostility)) return
       cen = mod(tick, 16_i8) == 0
-      if (cen) call soc_census()
+      if (cen) then
+         call soc_census()
+         call cool()
+      end if
       if (nreg_s /= nregion) call soc_build(.true.)
       call work_check()
       if (npol >= 2) call count_friction()
@@ -9723,14 +10028,15 @@ contains
             if (pol(p)%state /= 1) cycle
             r = pol(p)%capital
             if (r < 1 .or. r > nreg_s) cycle
-            d2 = dxwrap(real(regs(r)%cx - c%x, dp))**2 + dywrap(real(regs(r)%cy - c%y, dp))**2
+            d2 = real(regs(r)%cx - c%x, dp)**2 + real(regs(r)%cy - c%y, dp)**2
             hit(p) = region(c%x, c%y) == r .or. d2 <= (3d0*rr)**2
          end do
       case (CMD_SMITE)
          do b = -rr, rr
             do a = -rr, rr
                if (a*a + b*b > rr*rr) cycle
-               i = wrapi(c%x + a);  j = wrapj(c%y + b)
+               i = c%x + a;  j = c%y + b
+               if (.not. onmap(i, j)) cycle            ! the stroke falls off the world
                if (land(i,j) == 0) cycle
                p = cowner(i,j)
                if (p >= 1 .and. p <= MAXPOL) hit(p) = pol(p)%state == 1
@@ -9799,11 +10105,11 @@ contains
    subroutine work_check()
       ! keep the work arrays the size of the board and of the gazetteer
       if (allocated(dmap)) then
-         if (size(dmap, 1) /= NX .or. size(dmap, 2) /= NY) deallocate(dmap, tense, nearr, qx, qy)
+         if (size(dmap, 1) /= NX .or. size(dmap, 2) /= NY) deallocate(dmap, nearr, qx, qy)
       end if
       if (.not. allocated(dmap)) then
-         allocate(dmap(NX,NY), tense(NX,NY), nearr(NX,NY), qx(NX*NY), qy(NX*NY))
-         dmap = 0;  tense = 0;  nearr = 0
+         allocate(dmap(NX,NY), nearr(NX,NY), qx(NX*NY), qy(NX*NY))
+         dmap = 0;  nearr = 0
       end if
       if (allocated(ripe)) then
          if (size(ripe) /= nreg_s) deallocate(ripe, lowpop, ord, rfirst)
@@ -9846,14 +10152,50 @@ contains
       end do
    end subroutine region_lists
 
+   subroutine waters()
+      ! the waters of the world: sea regions joined by their borders (as the merchants of
+      ! rl_market reckon them); ships sail only between harbours on the same water
+      integer, allocatable :: stack(:)
+      integer :: r, s, k, m, top
+      if (allocated(wcomp)) then
+         if (size(wcomp) /= nreg_s) deallocate(wcomp)
+      end if
+      if (.not. allocated(wcomp)) allocate(wcomp(nreg_s))
+      allocate(stack(max(1, nreg_s)))
+      wcomp = 0;  nwat = 0
+      do r = 1, nreg_s
+         if (regs(r)%kind /= 1 .or. wcomp(r) /= 0) cycle
+         nwat = nwat + 1
+         wcomp(r) = nwat
+         top = 1;  stack(1) = r
+         do while (top > 0)
+            s = stack(top);  top = top - 1
+            do k = 1, nadj(s)
+               m = adj(k, s)
+               if (m < 1 .or. m > nreg_s) cycle
+               if (regs(m)%kind /= 1 .or. wcomp(m) /= 0) cycle
+               wcomp(m) = nwat
+               top = top + 1;  stack(top) = m
+            end do
+         end do
+      end do
+      if (allocated(wtouch)) then
+         if (size(wtouch, 1) /= max(1, nwat)) deallocate(wtouch)
+      end if
+      if (.not. allocated(wtouch)) allocate(wtouch(max(1, nwat), MAXPOL))
+      wtouch = .false.
+   end subroutine waters
+
    subroutine tally()
-      ! what each realm holds now: regions, living, coasts, borders and the character of
-      ! its people (diet, awe, settledness)
+      ! what each realm holds now: regions, living, coasts and the waters they open on,
+      ! borders and the character of its people (diet, awe, settledness)
       integer :: r, s, k, p, q
+      if (.not. allocated(wcomp)) call waters()
+      if (size(wcomp) /= nreg_s) call waters()
       do p = 1, MAXPOL
          pol(p)%nreg = 0;  pol(p)%pop = 0
       end do
-      pl_diet = 0;  pl_awe = 0;  pl_settled = 0;  coast = .false.;  bord = 0
+      pl_diet = 0;  pl_awe = 0;  pl_settled = 0;  coast = .false.;  bord = 0;  wtouch = .false.
       do r = 1, nreg_s
          p = rowner(r)
          if (p == 0) cycle
@@ -9874,6 +10216,7 @@ contains
          do k = 1, nadj(r)
             s = adj(k, r)
             if (s < 1 .or. s > nreg_s) cycle
+            if (regs(s)%kind == 1 .and. wcomp(s) > 0) wtouch(wcomp(s), p) = .true.
             if (regs(s)%kind /= 0) cycle
             q = rowner(s)
             if (q < 1 .or. q > MAXPOL .or. q == p) cycle
@@ -9920,7 +10263,7 @@ contains
 
    subroutine count_friction()
       ! cells slain by xenophobia (died = 2): in the border zone of two realms the friction
-      ! between them, elsewhere in a realm its strife
+      ! between them, and a little blood on the ground; elsewhere in a realm its strife
       integer :: i, j, p, q
       do j = 1, NY
          do i = 1, NX
@@ -9931,6 +10274,7 @@ contains
             if (q >= 1 .and. q /= p) then
                frc(p,q) = frc(p,q) + 1;  frc(q,p) = frc(q,p) + 1
                friction(p,q) = friction(p,q) + 1;  friction(q,p) = friction(q,p) + 1
+               bheat(i,j) = bheat(i,j) + HEAT_BORDER
             else
                strc(p) = strc(p) + 1
             end if
@@ -9938,12 +10282,22 @@ contains
       end do
    end subroutine count_friction
 
+   subroutine cool()
+      ! the embers of battles and border killings fade (each census); the last of them go out
+      where (bheat > 0.02)
+         bheat = HEAT_KEEP*bheat
+      elsewhere
+         bheat = 0
+      end where
+   end subroutine cool
+
    ! ================================================================ the council
 
    subroutine council()
-      ! twice a year every realm takes stock, grows or decays, keeps or loses its ruler and
+      ! once a year every realm takes stock, grows or decays, keeps or loses its ruler and
       ! its government, and deals with the others
       call region_lists()
+      call waters()
       call tally()
       call faith_share()
       call found_realms()
@@ -9959,6 +10313,7 @@ contains
       call make_peace()
       call tally()
       call soc_paint_owners()
+      call refresh_fronts()
       fdirty = .true.
       if (mod(tick, int(TPY, i8)) == 0) friction = 0
    end subroutine council
@@ -9979,7 +10334,7 @@ contains
             cycle
          end if
          ru = rpeople(r)
-         if (rpop(r) >= pv(P_FOUND)*sc .and. rshare(r) >= 0.5 .and. notable(ru)) then
+         if (rpop(r) >= pv(P_FOUND) .and. rshare(r) >= 0.5 .and. notable(ru)) then
             ripe(r) = ripe(r) + 1
          else
             ripe(r) = 0
@@ -10137,7 +10492,7 @@ contains
          if (regs(r)%kind /= 0) cycle
          p = rowner(r)
          if (p == 0) then
-            if (rpop(r) < 8*sc) cycle
+            if (rpop(r) < 8) cycle
             nc = 0
             do k = 1, nadj(r)
                q = rowner(adj(k, r))
@@ -10163,7 +10518,7 @@ contains
                end if
             end do
          else
-            if (rpop(r) < 3*sc) then
+            if (rpop(r) < 3) then
                lowpop(r) = lowpop(r) + 1
                if (lowpop(r) >= 4) then
                   rowner(r) = 0
@@ -10304,7 +10659,7 @@ contains
          if (unpaid(p)) s = s - 0.01d0
          pl_strife(p) = real(0.5d0*pl_strife(p) + strc(p), sp)   ! strife between its peoples
          strc(p) = 0
-         s = s - 0.04d0*pl_strife(p)/(pl_strife(p) + pv(P_HATE)*sc)
+         s = s - 0.04d0*pl_strife(p)/(pl_strife(p) + pv(P_HATE))
          s = s + 0.04d0*(urand() - 0.5d0)
          pol(p)%stability = min(1d0, max(0d0, s))
       end do
@@ -10726,7 +11081,7 @@ contains
             frate(q,p) = frate(p,q)
             frc(p,q) = 0;  frc(q,p) = 0
             contact = bord(p,q) > 0 .or. tradevol(p,q) + tradevol(q,p) > 0.5 .or. &
-                      cap_dist(p, q) < NX/3d0
+                      cap_dist(p, q) < CONTACTD
             if (contact) then
                d = 0
                if (pl_people(p) == pl_people(q) .and. pl_people(p) >= 0) d = d + 6
@@ -10737,7 +11092,7 @@ contains
                   d = d - merge(7d0, 3d0, bord(p,q) > 0)*z      ! zeal burns hottest at a border
                end if
                d = d + min(8d0, pv(P_TRADE)*(tradevol(p,q) + tradevol(q,p)))
-               d = d - 15*frate(p,q)/(frate(p,q) + pv(P_HATE)*sc)
+               d = d - 15*frate(p,q)/(frate(p,q) + pv(P_HATE))
                if (war(p,q) /= 0) d = d - 10
                if (max(tariff(p,q), tariff(q,p)) > 0.3) d = d - 3
                if (sanction(p,q) /= 0 .or. sanction(q,p) /= 0) d = d - 6
@@ -10910,8 +11265,8 @@ contains
             if (tann(p,q) < 0 .or. .not. route(p, q) .or. tradevol(p,q) + tradevol(q,p) < 1) then
                tann(p,q) = real(aim, sp)            ! nothing to announce to strangers
             else if (aim > tann(p,q) + 0.15d0) then  ! a rise aimed at q: answered, and news
-               tpend(q,p) = real(aim - tann(p,q), sp)
-               if (tick - t_tar(p,q) >= 3*TPY .or. why == 'reprisal') then
+               tpend(q,p) = real(aim - tann(p,q), sp)  ! (once in three years, reprisals too)
+               if (tick - t_tar(p,q) >= 3*TPY) then
                   call post(EV_TARIFF, x=cap_x(p), y=cap_y(p), a=p, b=q, v=t, s=trim(why))
                   t_tar(p,q) = tick
                end if
@@ -10986,14 +11341,16 @@ contains
       end if
       if (sp_ > 1.15d0*sq) then
          c = 1
-         if (frate(p,q) > FHOT*sc) c = 4
+         if (frate(p,q) > FHOT) c = 4
       end if
    end function war_reason
 
    recursive subroutine declare(p, q, cause, parent)
-      ! p declares war on q; q's allies may join it, and q's friends sanction p
+      ! p declares war on q; q's allies may join it, and the few friends of q who care most
+      ! sanction p (a handful, not every court that ever heard of q)
       integer, intent(in) :: p, q, cause, parent
-      integer :: w, s
+      integer :: w, s, k, n, best, cand(MAXPOL)
+      real(dp) :: care(MAXPOL)
       w = new_war()
       if (w == 0) return
       wrec(w) = warrec_t(state=1, a=p, b=q, cause=cause, parent=parent, t0=tick)
@@ -11014,6 +11371,7 @@ contains
       end if
       fdirty = .true.
       if (cause == 6) return
+      n = 0
       do s = 1, MAXPOL
          if (s == p .or. s == q .or. pol(s)%state /= 1) cycle
          if (war(s,p) /= 0) cycle
@@ -11025,14 +11383,20 @@ contains
          end if
          if (sanction(s,p) /= 0) cycle
          if (.not. (bord(s,p) > 0 .or. tradevol(s,p) + tradevol(p,s) > 1 .or. &
-                    cap_dist(s, p) < NX/3d0)) cycle          ! strangers do not care
+                    cap_dist(s, p) < CONTACTD)) cycle        ! strangers do not care
          if ((rel(s,q) > 30 .or. ally(s,q) /= 0 .or. same_faith(s, q)) .and. rel(s,p) < 40) then
-            sanction(s,p) = 1
-            tariff(s,p) = 1
-            s_until(s,p) = tick + int((6 + 6*urand())*TPY, i8)
-            s_for(s,p) = q
-            call post(EV_SANCTION, x=cap_x(s), y=cap_y(s), a=s, b=p, v=1d0)
+            n = n + 1;  cand(n) = s
+            care(n) = rel(s,q) - rel(s,p) + merge(100d0, 0d0, ally(s,q) /= 0)
          end if
+      end do
+      do k = 1, min(MAXSANC, n)                   ! those who care most shut their markets
+         best = maxloc(care(1:n), 1)
+         s = cand(best);  care(best) = -huge(1d0)
+         sanction(s,p) = 1
+         tariff(s,p) = 1
+         s_until(s,p) = tick + int((6 + 6*urand())*TPY, i8)
+         s_for(s,p) = q
+         call post(EV_SANCTION, x=cap_x(s), y=cap_y(s), a=s, b=p, v=1d0)
       end do
    end subroutine declare
 
@@ -11061,9 +11425,9 @@ contains
    end function new_war
 
    subroutine campaigns()
-      ! every half year each war fights a battle on its front, if it is the campaigning
-      ! season there (two thirds of the year, from spring; the tube's halves have their
-      ! seasons half a year apart) -- in winter only the burning front kills
+      ! twice a year each war may fight a battle on its front, if it is the campaigning
+      ! season there (the summer half; south of the equator the seasons run half a year
+      ! behind the north's), so one battle a year -- in winter only the burning front kills
       integer :: w
       real(dp) :: sg
       do w = 1, nwrec
@@ -11076,8 +11440,9 @@ contains
 
    subroutine battle(w)
       ! a battle of war w: the stronger side, helped by its numbers at the front and by its
-      ! allies, likely wins; the cells near the border die (doom), the armies shrink, both
-      ! sides tire; three victories in a row there take the loser's region (five its seat)
+      ! allies, likely wins; the cells near the border die (doom) and leave their blood on
+      ! the ground, the armies shrink, both sides tire; three victories in a row there take
+      ! the loser's region (five its seat).  Every battle in which a few fell is news
       integer, intent(in) :: w
       integer :: a, b, ra, rb, ora, orb, nc, m, i, j, na, nb, win, los, rlos, sl, sw
       integer(i8) :: kd
@@ -11127,9 +11492,11 @@ contains
          if (region(i,j) == rlos) then
             if (h < fl) then
                doom(i,j) = 1;  sl = sl + 1
+               bheat(i,j) = bheat(i,j) + HEAT_BATTLE
             end if
          else if (h < fw) then
             doom(i,j) = 1;  sw = sw + 1
+            bheat(i,j) = bheat(i,j) + HEAT_BATTLE
          end if
       end do
       call losses(los, sl, 0.04d0)
@@ -11148,8 +11515,9 @@ contains
          wrec(w)%streak = min(0, wrec(w)%streak) - 1
       end if
       wonb(win) = .true.
-      if (sl + sw > 60*sc) call post(EV_BATTLE, x=wrec(w)%fx, y=wrec(w)%fy, a=win, b=los, &
-                                     v=real(sl + sw, dp))
+      wrec(w)%t_last = tick;  wrec(w)%last_win = win;  wrec(w)%last_slain = sl + sw
+      if (sl + sw >= NEWS_SLAIN) call post(EV_BATTLE, x=wrec(w)%fx, y=wrec(w)%fy, a=win, b=los, &
+                                           v=real(sl + sw, dp))
       if (gov_of(win) == GOV_HORDE) then         ! the horde carries off the stores
          do m = 1, NGOODS
             steal = 0.2d0*max(0d0, pol(los)%stock(m))
@@ -11207,8 +11575,11 @@ contains
    end function support
 
    subroutine conquer(w, p, q, r)
-      ! realm p takes region r from realm q in war w
+      ! realm p takes region r from realm q in war w (news that says 'seat' when it was q's
+      ! capital)
       integer, intent(in) :: w, p, q, r
+      logical :: seat
+      seat = r == pol(q)%capital
       rowner(r) = p
       lowpop(r) = 0
       pl_conq(p) = pl_conq(p) + 1;  conqg(p) = conqg(p) + 1
@@ -11221,7 +11592,11 @@ contains
       else
          wrec(w)%taken_b = wrec(w)%taken_b + 1
       end if
-      call post(EV_CONQUEST, x=regs(r)%cx, y=regs(r)%cy, a=p, b=q, v=real(r, dp))
+      if (seat) then
+         call post(EV_CONQUEST, x=regs(r)%cx, y=regs(r)%cy, a=p, b=q, v=real(r, dp), s='seat')
+      else
+         call post(EV_CONQUEST, x=regs(r)%cx, y=regs(r)%cy, a=p, b=q, v=real(r, dp), s='')
+      end if
       call tally()
       if (pol(q)%nreg == 0) then
          call fall(q, p)
@@ -11230,6 +11605,7 @@ contains
          pol(q)%stability = max(0d0, pol(q)%stability - 0.1d0)
       end if
       call soc_paint_owners()
+      call refresh_fronts()
       fdirty = .true.
    end subroutine conquer
 
@@ -11250,7 +11626,11 @@ contains
          par = wrec(w)%parent
          done = .false.
          if (par > 0) done = wrec(par)%state /= 1
-         if (.not. (ea .or. eb .or. old .or. done)) cycle
+         if (done) then                            ! the war it was called to is over, so is
+            call end_war(w, 0, .false.)            ! this one, quietly
+            cycle
+         end if
+         if (.not. (ea .or. eb .or. old)) cycle
          score = wrec(w)%wins_a - wrec(w)%wins_b + 3*(wrec(w)%taken_a - wrec(w)%taken_b)
          if (ea .and. .not. eb) then
             o = -1
@@ -11269,7 +11649,8 @@ contains
 
    recursive subroutine end_war(w, o, talk)
       ! the end of war w (o: 1 the attacker won, -1 the defender, 0 neither); a truce, the
-      ! loser's tribute, and the end of the wars its allies were called to
+      ! loser's tribute, and the end of the wars its allies were called to (talk: a peace
+      ! is sworn, and is news; the allies' wars end with it without a word of their own)
       integer, intent(in) :: w, o
       logical, intent(in) :: talk
       integer :: a, b, win, los, v
@@ -11299,16 +11680,17 @@ contains
       end if
       fdirty = .true.
       do v = 1, nwrec
-         if (wrec(v)%state == 1 .and. wrec(v)%parent == w) call end_war(v, 0, talk)
+         if (wrec(v)%state == 1 .and. wrec(v)%parent == w) call end_war(v, 0, .false.)
       end do
    end subroutine end_war
 
    subroutine front_of(w)
       ! the front of war w: the longest border between the two sides' land regions, and
-      ! the middle of it (between the two seats if they do not meet)
+      ! the border cell nearest the middle of it (where the banners meet); between the two
+      ! seats if the realms do not meet
       integer, intent(in) :: w
-      integer :: a, b, r, s, k, ra, rb, m, c, i, j, n, i0, j0
-      real(dp) :: sx, sy, sco, bs
+      integer :: a, b, r, s, k, ra, rb, m, c, i, j, n
+      real(dp) :: sx, sy, sco, bs, d2
       a = wrec(w)%a;  b = wrec(w)%b
       ra = 0;  rb = 0;  bs = 0
       do r = 1, nreg_s
@@ -11325,30 +11707,57 @@ contains
       end do
       wrec(w)%ra = ra;  wrec(w)%rb = rb
       if (ra == 0) then
-         i0 = cap_x(a);  j0 = cap_y(a)
-         wrec(w)%fx = wrapi(i0 + nint(0.5d0*dxwrap(real(cap_x(b) - i0, dp))))
-         wrec(w)%fy = wrapj(j0 + nint(0.5d0*dywrap(real(cap_y(b) - j0, dp))))
+         wrec(w)%fx = wrapi(nint(0.5d0*(cap_x(a) + cap_x(b))))
+         wrec(w)%fy = wrapj(nint(0.5d0*(cap_y(a) + cap_y(b))))
          return
       end if
-      n = 0;  sx = 0;  sy = 0;  i0 = regs(ra)%cx;  j0 = regs(ra)%cy
-      do m = rfirst(ra), rfirst(ra + 1) - 1
+      n = 0;  sx = 0;  sy = 0
+      do m = rfirst(ra), rfirst(ra + 1) - 1        ! the middle of ra's cells facing rb
          c = rcells(m)
          i = 1 + mod(c - 1, NX);  j = 1 + (c - 1)/NX
-         if (region(i,j) /= ra) cycle
-         if (region(ip(i),j) /= rb .and. region(im(i),j) /= rb .and. &
-             region(i,jp(j)) /= rb .and. region(i,jm(j)) /= rb) cycle
-         if (n == 0) then
-            i0 = i;  j0 = j
-         end if
-         n = n + 1
-         sx = sx + dxwrap(real(i - i0, dp));  sy = sy + dywrap(real(j - j0, dp))
+         if (.not. faces(i, j, ra, rb)) cycle
+         n = n + 1;  sx = sx + i;  sy = sy + j
       end do
-      if (n > 0) then
-         wrec(w)%fx = wrapi(i0 + nint(sx/n));  wrec(w)%fy = wrapj(j0 + nint(sy/n))
-      else
-         wrec(w)%fx = regs(ra)%cx;  wrec(w)%fy = regs(ra)%cy
-      end if
+      wrec(w)%fx = regs(ra)%cx;  wrec(w)%fy = regs(ra)%cy
+      if (n == 0) return
+      sx = sx/n;  sy = sy/n;  bs = huge(1d0)
+      do m = rfirst(ra), rfirst(ra + 1) - 1        ! and the one of them nearest it
+         c = rcells(m)
+         i = 1 + mod(c - 1, NX);  j = 1 + (c - 1)/NX
+         if (.not. faces(i, j, ra, rb)) cycle
+         d2 = (i - sx)**2 + (j - sy)**2
+         if (d2 < bs) then
+            bs = d2;  wrec(w)%fx = i;  wrec(w)%fy = j
+         end if
+      end do
    end subroutine front_of
+
+   logical function faces(i, j, r, o)
+      ! is cell (i,j) of region r, with one of its four neighbours in region o?
+      integer, intent(in) :: i, j, r, o
+      faces = .false.
+      if (region(i,j) /= r) return
+      faces = region(ip(i),j) == o .or. region(im(i),j) == o .or. region(i,jp(j)) == o .or. &
+              region(i,jm(j)) == o
+   end function faces
+
+   subroutine refresh_fronts()
+      ! after land has changed hands: a war whose two front regions no longer face each
+      ! other under their old banners finds its new front now, not at its next battle (its
+      ! run of victories starts afresh, as it would have then)
+      integer :: w, a, b, ra, rb
+      do w = 1, nwrec
+         if (wrec(w)%state /= 1) cycle
+         a = wrec(w)%a;  b = wrec(w)%b
+         if (pol(a)%state /= 1 .or. pol(b)%state /= 1) cycle
+         ra = wrec(w)%ra;  rb = wrec(w)%rb
+         if (ra >= 1 .and. ra <= nreg_s .and. rb >= 1 .and. rb <= nreg_s) then
+            if (rowner(ra) == a .and. rowner(rb) == b) cycle      ! the front holds
+         end if
+         call front_of(w)
+         if (wrec(w)%ra /= ra .or. wrec(w)%rb /= rb) wrec(w)%streak = 0
+      end do
+   end subroutine refresh_fronts
 
    subroutine battlefield(ra, rb, nc)
       ! the cells of regions ra and rb within BANDD of their common border, in qx, qy(1:nc)
@@ -11387,14 +11796,15 @@ contains
    ! ---------------------------------------------------------------- the fronts and the cells
 
    subroutine draw_fronts()
-      ! front = 1 on land within 3 cells of a border between realms at war; hostility is
-      ! the government's temper, fourfold on a front, half again at a tense border
+      ! front = 1 on land within 3 cells of a border between realms at war, tension = 1
+      ! within 3 cells of a border between realms at peace that hate each other; hostility
+      ! is the government's temper, fourfold on a front, half again at a tense border
       integer :: i, j, d, a, b, p, q, nf, nt, r
       logical :: inwar(MAXPOL)
       real(sp) :: h
       call touch()
       call border_zone()
-      front = 0;  tense = 0
+      front = 0;  tension = 0
       do p = 1, MAXPOL
          inwar(p) = pol(p)%state == 1 .and. at_war(p)
       end do
@@ -11427,21 +11837,21 @@ contains
                q = cowner(a,b)
                if (q < 1 .or. q > MAXPOL .or. q == p .or. land(a,b) == 0) cycle
                if (war(p,q) == 0 .and. rel(p,q) < -30) then
-                  tense(i,j) = 1
+                  tension(i,j) = 1
                   nt = nt + 1;  qx(nt) = i;  qy(nt) = j
                   exit
                end if
             end do
          end do
       end do
-      call widen(tense, nt, inwar, .false.)
+      call widen(tension, nt, inwar, .false.)
       do j = 1, NY
          do i = 1, NX
             r = region(i,j)
             h = 1
             if (land(i,j) /= 0 .and. r >= 1 .and. r <= nreg_s) then
                h = rmod_xeno(r)*(1 + 3*front(i,j))
-               if (tense(i,j) /= 0) h = 1.5*h
+               if (tension(i,j) /= 0) h = 1.5*h
             end if
             hostility(i,j) = h
          end do
@@ -11647,10 +12057,14 @@ contains
    end function attacking
 
    logical function route(p, q)
-      ! could p and q trade: over a border, or by sea between two coasts (hordes do not sail)
+      ! could p and q trade: over a border, or by sea between harbours on the same water
+      ! (hordes do not sail)
       integer, intent(in) :: p, q
-      route = bord(p,q) > 0 .or. (coast(p) .and. coast(q) .and. gov_of(p) /= GOV_HORDE .and. &
-                                  gov_of(q) /= GOV_HORDE)
+      route = bord(p,q) > 0
+      if (route .or. .not. (coast(p) .and. coast(q))) return
+      if (gov_of(p) == GOV_HORDE .or. gov_of(q) == GOV_HORDE) return
+      if (.not. allocated(wtouch)) return
+      route = any(wtouch(:,p) .and. wtouch(:,q))
    end function route
 
    logical function wealthy(p)
@@ -11751,10 +12165,9 @@ contains
    end function cap_y
 
    real(dp) function cap_dist(p, q)
-      ! distance between two seats on the torus, cells
+      ! distance between two seats as the crow flies, cells
       integer, intent(in) :: p, q
-      cap_dist = sqrt(dxwrap(real(cap_x(p) - cap_x(q), dp))**2 + &
-                      dywrap(real(cap_y(p) - cap_y(q), dp))**2)
+      cap_dist = sqrt(real(cap_x(p) - cap_x(q), dp)**2 + real(cap_y(p) - cap_y(q), dp)**2)
    end function cap_dist
 
 end module rl_polity
@@ -11949,7 +12362,7 @@ contains
       fa_failed = 0;  fa_failed_hand = 0;  fa_real_n = 0;  fa_real_kept = 0
       fa_blind_n = 0;  fa_blind_kept = 0;  fa_px = 0;  fa_py = 0;  fa_wonder = .false.
       fa_missions = 0;  fa_mission_x = 0;  fa_mission_y = 0;  fa_mission_t = -1
-      rpop_min = max(4, nint(20*real(NX, dp)*NY/73728))
+      rpop_min = 20                            ! regions keep their size on any map, and so does this
       if (allocated(risk)) deallocate(risk, nland, sfr, cr, reach)
       call fit_regions()
    end subroutine faith_init
@@ -13143,7 +13556,7 @@ contains
       if (ncr == 0) return
       pown = merge(0.5d0, 0.2d0, faiths(f)%devotion < 0.2)
       own = urand() < pown
-      sc = NX/5d0
+      sc = 76.8d0                               ! cells: a prophet's reach is the same on any map
       home = land_reg(fa_px(f), fa_py(f))         ! where the prophet stands is never heathen
       do mode = 1, 3
          do k = 1, ncr
@@ -14003,12 +14416,12 @@ contains
 
    subroutine nearest_life(x0, y0, x, y)
       ! the live cell nearest (x0,y0), searching outward in square rings; (0,0) if none
-      ! lives within NX/8
+      ! lives within 48 cells
       integer, intent(in)  :: x0, y0
       integer, intent(out) :: x, y
       integer :: d, a, b, i, j, best
       x = 0;  y = 0
-      do d = 0, NX/8
+      do d = 0, 48
          best = huge(best)
          do b = -d, d
             do a = -d, d
@@ -14408,6 +14821,7 @@ module rl_market
    real(dp), parameter :: LUXMAX = 4                  ! wealth multiplies the want of spice <= 4x
    real(dp), parameter :: WARCUT = 0.4d0              ! share of the yield lost while at war
    real(dp), parameter :: C_LAND = 0.08d0, C_SEA = 0.2d0, C_DIST = 0.3d0   ! carriage, of the price
+   real(dp), parameter :: C_REACH = 384                ! cells over which carriage adds C_DIST
    real(dp), parameter :: C_ICE = 0.5d0, ICESHUT = 0.8d0   ! icebound harbours: dearer, then shut
    real(dp), parameter :: SMOOTH = 0.3d0              ! weight of a new quarter in yearly rates
    real(dp), parameter :: FAMINE0 = 0.05d0            ! a shortfall above this drains the cells
@@ -14456,7 +14870,8 @@ contains
       ! register the knobs of trade and prices (group Market)
       P_CARRY  = reg_param('transport', 'Cost of carriage', 'Market', 1d0, 0d0, 4d0, &
          'Multiplies the cost of carrying goods: 8% of the price over a border, 20% by sea, '// &
-         'up to 17% more across the world. Dear carriage makes realms feed themselves.', ui=.true.)
+         'and 8% more for every hundred cells between the capitals. Dear carriage makes realms '// &
+         'feed themselves.', ui=.true.)
       P_SPEC   = reg_param('specialise', 'Division of labour', 'Market', 0.3d0, 0d0, 0.6d0, &
          'Workers move to the trades that pay best where they live, with diminishing returns '// &
          'of this power, so realms do what they do best (comparative advantage). 0: none.', &
@@ -14930,7 +15345,7 @@ contains
          if (.not. mk_live(p)) cycle
          do q = p + 1, MAXPOL
             if (.not. mk_live(q)) cycle
-            d = C_DIST*cap_dist(p, q)/NX
+            d = C_DIST*cap_dist(p, q)/C_REACH
             if (nb(p, q)) then
                mk_route(p, q) = 1
                mk_carry(p, q) = real(pv(P_CARRY)*(C_LAND + d), sp)
@@ -17137,11 +17552,16 @@ module rl_chronicle
    type entry_t
       integer :: id = 0, kind = 0, imp = 1, x = 0, y = 0, rule = -1
       integer :: reg = 0, keya = 0, rep = 1, nbase = 0
+      integer :: a = 0, b = 0, vk = 0         ! the event's ids, and which way it went
+      integer :: tier = 0, prev = 0           ! how loudly it is told; the entry it retells
+      logical :: gone = .false.               ! retold since by a newer entry
       real(dp) :: year = 0
       character(len=LT) :: text = ''
    end type entry_t
    type(entry_t) :: ent(NE)
    integer :: nid = 0, printed = 0, ndrop = 0
+   integer, parameter :: KHEAD(6) = [EV_WAR, EV_HOLYWAR, EV_PEACE, EV_REALM_FALL, EV_SECEDE, &
+                                     EV_CONQUEST]           ! the headlines of war between realms
 
    ! ================================================================ memory of harms (for epitaphs)
    integer, parameter :: NH = 128
@@ -17272,8 +17692,8 @@ contains
       age_name = 'the Age of Beginnings'
       world_name = world_word()
       call name_regions()
-      call add(KIND_AGE, 5, 'Here begins the Age of Beginnings. The world of '//trim(world_name)// &
-               ' lay waiting, and the Hand looked upon it.', 0, 0, -1, 0)
+      call add(KIND_AGE, 5, 3, 3, 'Here begins the Age of Beginnings. The world of '// &
+               trim(world_name)//' lay waiting, and the Hand looked upon it.', 0, 0, -1, 0, 0, 0, 0)
    end subroutine chronicle_init
 
    subroutine chronicle_step()
@@ -17299,12 +17719,12 @@ contains
       type(cmd_t), intent(in) :: c
       if (c%kind /= CMD_PURIST .or. .not. c%hand) return
       if (c%v > 0.5d0) then
-         call add(KIND_HAND, 3, 'The Hand stilled the world. Sky and sea and plague fell away, '// &
-                  'and only the old law remained: born of three, enduring on two or three.', &
-                  0, 0, RULE_CONWAY, 1)
+         call add(KIND_HAND, 3, 1, 1, 'The Hand stilled the world. Sky and sea and plague fell '// &
+                  'away, and only the old law remained: born of three, enduring on two or three.', &
+                  0, 0, RULE_CONWAY, 1, 0, 0, 1)
       else
-         call add(KIND_HAND, 3, 'The Hand let the world go, and the winds and the peoples '// &
-                  'moved again.', 0, 0, -1, 0)
+         call add(KIND_HAND, 3, 1, 1, 'The Hand let the world go, and the winds and the peoples '// &
+                  'moved again.', 0, 0, -1, 0, 0, 0, 0)
       end if
    end subroutine chronicle_command
 
@@ -17320,11 +17740,14 @@ contains
 
    ! ================================================================ the Book: entries
 
-   subroutine add(kind, imp, text, x, y, rule, keya)
-      ! write an entry, merging a repeat and thinning small news in a busy year
-      integer,      intent(in) :: kind, imp, x, y, rule, keya
+   subroutine add(kind, imp, tier, top, text, x, y, rule, keya, a, b, vk)
+      ! write an entry. A story that comes round again within five years is told anew, and the
+      ! new entry names the one it replaces (prev). In a busy year a flood of map news is told
+      ! quietly and small news is thinned; a headline is never dropped (top: the tier its kind
+      ! deserves, before the headlines were spaced out)
+      integer,      intent(in) :: kind, imp, tier, top, x, y, rule, keya, a, b, vk
       character(*), intent(in) :: text
-      integer :: id, k, reg, nrec, lim
+      integer :: id, k, reg, nrec, nloud, lim, ti, rep, prev, nb
       real(dp) :: now
       character(len=:), allocatable :: t
       now = year_now()
@@ -17332,39 +17755,70 @@ contains
       if ((x /= 0 .or. y /= 0) .and. allocated(region)) then
          reg = region(wrapi(x), wrapj(y))
       end if
+      ti = max(0, min(3, tier))
+      lim = 3
+      if (P_BUSY > 0) lim = nint(pv(P_BUSY))
+      nrec = 0;  nloud = 0                     ! entries in the last year; those on the map
+      do id = nid, max(1, nid - NE + 1), -1
+         k = mod(id - 1, NE) + 1
+         if (ent(k)%year <= now - 1) exit
+         if (ent(k)%gone) cycle
+         nrec = nrec + 1
+         if (ent(k)%tier >= 1) nloud = nloud + 1
+      end do
+      ! a year holds 2*lim marks on the map: news of the realms may take them all, other news only
+      ! the first two thirds; past that it goes into the Book quietly
+      if (ti == 1 .and. top <= 1 .and. nloud >= merge(2*lim, (4*lim)/3, kind >= 40 .and. kind <= 69)) &
+         ti = 0
+      rep = 1;  prev = 0
       if (imp < 5 .and. kind /= EV_EXTINCT .and. kind /= KIND_AGE) then
          do id = nid, max(1, nid - 29, nid - NE + 1), -1
             k = mod(id - 1, NE) + 1
             if (ent(k)%year < now - 5) exit
+            if (ent(k)%gone) cycle
             if (ent(k)%kind == kind .and. ent(k)%reg == reg .and. ent(k)%keya == keya .and. &
-                ent(k)%rule == rule) then
-               ent(k)%rep = ent(k)%rep + 1
-               t = ent(k)%text(1:ent(k)%nbase)//' '//again(ent(k)%rep)
-               ent(k)%text = t
-               return
+                ent(k)%b == b .and. ent(k)%vk == vk .and. ent(k)%rule == rule) then
+               rep = ent(k)%rep + 1;  prev = ent(k)%id
+               ti = max(ti, ent(k)%tier)       ! told again, never more quietly than before
+               ent(k)%gone = .true.
+               exit
             end if
          end do
       end if
-      if (imp <= 2) then
-         lim = 3
-         if (P_BUSY > 0) lim = nint(pv(P_BUSY))
-         nrec = 0
-         do id = nid, max(1, nid - NE + 1), -1
-            k = mod(id - 1, NE) + 1
-            if (ent(k)%year <= now - 1) exit
-            nrec = nrec + 1
-         end do
-         if (nrec > lim) then
-            ndrop = ndrop + 1
-            return
-         end if
+      if (prev == 0 .and. ti == 0 .and. imp <= 2 .and. nrec > lim) then
+         ndrop = ndrop + 1
+         return
       end if
       t = cap(text)
+      nb = min(LT - 48, len(t))
+      if (prev > 0) t = cap(text(1:nb))//' '//again(rep)
       nid = nid + 1
       k = mod(nid - 1, NE) + 1
       ent(k) = entry_t(id=nid, kind=kind, imp=max(1, min(5, imp)), x=x, y=y, rule=rule, &
-                       reg=reg, keya=keya, rep=1, nbase=min(LT - 48, len(t)), year=now, text=t)
+                       reg=reg, keya=keya, rep=rep, nbase=nb, a=a, b=b, vk=vk, tier=ti, &
+                       prev=prev, year=now, text=t)
    end subroutine add
+
+   integer function head(gap, kind)
+      ! a headline (2), unless another was told within the last gap years: then a mark on the
+      ! map (1), and the Book keeps it either way. Only headlines of this kind count when
+      ! kind > 0; only those of war between realms (and the Ages) when kind < 0
+      real(dp), intent(in) :: gap
+      integer,  intent(in) :: kind
+      integer :: id, k
+      real(dp) :: now
+      head = 2
+      now = year_now()
+      do id = nid, max(1, nid - NE + 1), -1
+         k = mod(id - 1, NE) + 1
+         if (ent(k)%year <= now - gap) exit
+         if (ent(k)%gone .or. ent(k)%tier < 2) cycle
+         if (kind > 0 .and. ent(k)%kind /= kind) cycle
+         if (kind < 0 .and. ent(k)%tier < 3 .and. all(KHEAD /= ent(k)%kind)) cycle
+         head = 1
+         return
+      end do
+   end function head
 
    function again(n) result(s)
       ! the tail of a merged entry
@@ -17379,7 +17833,8 @@ contains
    end function again
 
    subroutine chronicle_json(sb, since_id)
-      ! "chron":[{id,year,kind,imp,text,x,y,rule}..] since since_id, and "age":{name,since}
+      ! "chron":[{id,year,kind,imp,tier,text,x,y,rule,a,b,rep,prev}..] since since_id (an entry
+      ! retold since is left out: its retelling names it in prev), and "age":{name,since}
       type(sbuf_t), intent(inout) :: sb
       integer,      intent(in)    :: since_id
       integer :: id, k
@@ -17388,12 +17843,15 @@ contains
       first = .true.
       do id = max(since_id + 1, nid - NE + 1, 1), nid
          k = mod(id - 1, NE) + 1
+         if (ent(k)%gone) cycle
          if (.not. first) call sb_put(sb, ',')
          first = .false.
          call sb_put(sb, '{"id":'//itoa(id)//',"year":'//itoa(int(ent(k)%year))//',"kind":'// &
-                         jstr(kname(ent(k)%kind))//',"imp":'//itoa(ent(k)%imp)//',"text":'// &
-                         jstr(trim(ent(k)%text))//',"x":'//itoa(ent(k)%x)//',"y":'// &
-                         itoa(ent(k)%y)//',"rule":'//itoa(ent(k)%rule)//'}')
+                         jstr(kname(ent(k)%kind))//',"imp":'//itoa(ent(k)%imp)//',"tier":'// &
+                         itoa(ent(k)%tier)//',"text":'//jstr(trim(ent(k)%text))//',"x":'// &
+                         itoa(ent(k)%x)//',"y":'//itoa(ent(k)%y)//',"rule":'// &
+                         itoa(ent(k)%rule)//',"a":'//itoa(ent(k)%a)//',"b":'//itoa(ent(k)%b)// &
+                         ',"rep":'//itoa(ent(k)%rep - 1)//',"prev":'//itoa(ent(k)%prev)//'}')
       end do
       call sb_put(sb, '],"age":{"name":'//jstr(age_name)//',"since":'// &
                       itoa(int(age_tick/TPY))//'}')
@@ -17433,6 +17891,7 @@ contains
       character(len=:), allocatable :: t
       do id = max(printed + 1, nid - NE + 1, 1), nid
          k = mod(id - 1, NE) + 1
+         if (ent(k)%gone) cycle
          t = 'Year '//itoa(int(ent(k)%year))//'. '//trim(ent(k)%text)
          if (ent(k)%kind == KIND_AGE) then
             write(unit, '(a)') ''
@@ -18201,23 +18660,25 @@ contains
    end function gov_word
 
    integer function realm_index(p)
-      ! the syllable pair of realm p, kept distinct from the realms founded before it
+      ! the syllable pair of realm p: chosen the first time its name is spoken, apart from
+      ! every realm that has a name, and kept in pol(p)%nameix for as long as the slot is its own
       integer, intent(in) :: p
-      integer :: q, m, idx(MAXPOL), tries
+      integer :: q, idx, tries
       logical :: dup
-      realm_index = 0
-      do q = 1, p
-         idx(q) = mod(hh(pol(q)%seed, q, world_seed), 576)
-         do tries = 1, 576
-            dup = .false.
-            do m = 1, q - 1
-               if (idx(m) == idx(q)) dup = .true.
-            end do
-            if (.not. dup) exit
-            idx(q) = mod(idx(q) + 173, 576)
+      if (pol(p)%nameix > 0) then
+         realm_index = pol(p)%nameix - 1;  return
+      end if
+      idx = mod(hh(pol(p)%seed, p, world_seed), 576)
+      do tries = 1, 576
+         dup = .false.
+         do q = 1, MAXPOL
+            if (q /= p .and. pol(q)%state /= 0 .and. pol(q)%nameix == idx + 1) dup = .true.
          end do
+         if (.not. dup) exit
+         idx = mod(idx + 173, 576)
       end do
-      realm_index = idx(p)
+      realm_index = idx
+      if (pol(p)%state /= 0) pol(p)%nameix = idx + 1
    end function realm_index
 
    function realm_name(p) result(s)
@@ -18729,7 +19190,7 @@ contains
       ! one event into the Book
       type(event_t), intent(in) :: e
       character(len=:), allocatable :: t
-      integer :: imp, rl, ka, k, d, n
+      integer :: imp, rl, ka, k, d, n, tier, vk, hc, top
       cur = e;  xs = ''
       hv = hh(e%kind*7919 + e%a, e%b + 31*e%x + 977*e%y, int(iand(e%tick, 2147483647_i8)))
       if (e%kind >= 1 .and. e%kind <= NK) then
@@ -18737,12 +19198,24 @@ contains
          tlast(e%kind) = e%tick
       end if
       imp = 2;  rl = -1;  ka = e%a;  t = ''
+      tier = 0;  vk = 0;  hc = 0               ! QUIET, unless told otherwise below
       select case (e%kind)
       ! ------------------------------------------------------------ the peoples
       case (EV_ARISE)
-         imp = 3;  rl = e%a
+         imp = 3;  rl = e%a;  tier = 1
          xs(1) = rule_flavour(e%a)
-         if (e%b >= 0 .and. e%b /= e%a) then
+         if (trim(e%s) == 'hybrid') then        ! two peoples mingled (rl_life marks it)
+            xs(1) = 'their kin';  xs(4) = 'strangers'
+            if (allocated(ppl)) then
+               k = ppl(rl)%parent
+               if (k >= 0 .and. k <= 65535) xs(1) = people_title(k)
+               k = ppl(rl)%mate
+               if (k >= 0 .and. k <= 65535) xs(4) = people_title(k)
+            end if
+            t = pk('In {R} {1} and {4} mingled, and {A} ({rs}) were born of both.', &
+                   'Two peoples met in {R}, {1} and {4}; of their mingling came {A} ({rs}).', &
+                   'Of {1} and {4} together were born {A} ({rs}), in {R}.')
+         else if (e%b >= 0 .and. e%b /= e%a) then
             t = pk('From {B} of {R} arose a new people, {A} ({rs}), {1}.', &
                    'In {R} a new people came forth from {B}: {A} ({rs}), {1}.', &
                    'Out of {B} were born {A} ({rs}) in {R}, {1}.', &
@@ -18764,6 +19237,7 @@ contains
             end if
             if (allocated(ppl)) ppl(rl)%flags = ibset(ppl(rl)%flags, PF_LEGEND)
             imp = 4
+            if (d == 0) hc = 2                 ! a legend come back
          end if
       case (EV_PEAK)
          imp = 3;  rl = e%a
@@ -18771,7 +19245,8 @@ contains
                 'Never were {A} so many: {f} of the living are theirs.', &
                 'The world fills with {A}; {f} of all life now bears their rule.')
       case (EV_EXTINCT)
-         imp = 4;  rl = e%a
+         imp = 4;  rl = e%a;  tier = 1
+         if (e%v >= 3000) hc = 2               ! a great people: 3000 cells at their height
          t = epitaph(e)
       case (EV_HYBRID)
          imp = 3;  rl = e%a
@@ -18782,7 +19257,7 @@ contains
                 'Two peoples met in {R}, {1} and {B}; of their mingling came {A}.', &
                 'Of {1} and {B} together were born {A} ({rs}), in {R}.')
       case (EV_LEGEND)
-         imp = 4;  rl = e%a
+         imp = 4;  rl = e%a;  tier = 2
          if (allocated(ppl)) ppl(rl)%flags = ibset(ppl(rl)%flags, PF_LEGEND)
          k = famous_index(e%a, d)
          if (k > 0) then
@@ -18793,7 +19268,7 @@ contains
             t = '{A} passed into legend.'
          end if
       case (EV_WANDERERS)
-         rl = e%a;  imp = 3
+         rl = e%a;  imp = 3;  tier = 1
          if (allocated(ppl)) ppl(rl)%flags = ibset(ppl(rl)%flags, PF_WANDER)
          if (rec(EV_WANDERERS) < 1.01d0 .and. .not. had_age(AGE_WANDER)) imp = 4
          t = pk('The first wanderers of {A} were seen crossing {R}: small ships of five, ' // &
@@ -18802,36 +19277,42 @@ contains
                 'In {R} some of {A} took to the road: little ships of five cells that sail ' // &
                 'the empty land.')
       case (EV_CROSSING)
-         imp = 3;  rl = e%a
+         imp = 3;  rl = e%a;  tier = 1
          if (allocated(ppl)) ppl(rl)%flags = ibset(ppl(rl)%flags, PF_SEAFARER)
          t = pk('Seafarers of {A} came ashore in {R}, a land their people had never known.', &
                 '{A} crossed the water and set foot upon {R}.', &
                 'Beyond the sea {A} found {R}, and settled there.')
       case (EV_LAZARUS)
-         imp = 4;  rl = e%a
+         imp = 4;  rl = e%a;  tier = 1
          t = lazarus(e)
       case (EV_RADIATION)
-         imp = 3
+         imp = 3;  tier = 1
          t = pk('A flowering of peoples: {nw} new peoples arose within ten years.', &
                 'The rules of life ran wild; {nw} new peoples were named in ten years.', &
                 'It was a time of many births: {nw} new peoples in a decade, the last of ' // &
                 'them {A}.')
       case (EV_DIEOFF)
-         imp = 4
+         imp = 4;  tier = 3
          xs(1) = fracword(1 - e%v)
          t = pk('A great dying: {1} of all that lived perished.', &
                 'The world emptied; {1} of the living were gone within five years.', &
                 'Silence spread over {W}, for {1} of the living perished.')
       case (EV_HUNTERS)
-         imp = 3;  rl = e%a
+         imp = 3;  rl = e%a;  tier = 1
          call remember(e, e%a, 0)
          t = pk('{A} learned to hunt; they feed now upon other peoples.', &
                 'In {R} {A} turned hunter, and the peoples about them grew few.', &
                 '{A} grew teeth: they take their bread from the flesh of their neighbours.')
       ! ------------------------------------------------------------ plague and awe
       case (EV_PLAGUE)
-         imp = 4;  rl = e%b
+         imp = 4;  rl = e%b;  tier = 1
          call remember(e, e%b, e%a)
+         if (trim(e%s) /= 'hand') then         ! a headline at most once in five years, and
+            hc = 3                             ! readily only when a great people sickens
+            if (allocated(ppl) .and. e%b >= 0 .and. e%b <= 65535) then
+               if (ppl(e%b)%n > 0.1d0*n_alive) hc = 4
+            end if
+         end if
          if (trim(e%s) == 'hand') then
             t = pk('At the Hand''s word {G} was loosed upon {B} in {R}.', &
                    'The Hand sent {G} among {B}; it began in {R}.')
@@ -18841,18 +19322,18 @@ contains
                    'A sickness rose in {R}: {G}, and it fed upon {B}.')
          end if
       case (EV_PLAGUE_END)
-         imp = 3;  rl = e%b
+         imp = 3;  rl = e%b;  tier = 1
          t = pk('{G} passed from the world, having taken {n}.', &
                 '{G} burned itself out at last; {n} lay dead of it.', &
                 'The last fever of {G} cooled. It had taken {n} of {B} and their neighbours.')
       case (EV_SHRINE)
-         imp = 3;  rl = e%b
+         imp = 3;  rl = e%b;  tier = 1
          t = pk('In {R} the reverent of {B} raised a shrine, and pilgrims came.', &
                 'A holy place grew in {R}, where {B} had long kept faith with the Hand.', &
                 '{B} hallowed a shrine in {R}.')
       ! ------------------------------------------------------------ locusts and Titans
       case (EV_LOCUSTS)
-         imp = 3
+         imp = 3;  tier = 1
          call remember(e, -1, 0)
          t = pk('The Hungry Wind rose over {R}: a swarm of {n} darkened the sky.', &
                 'Locusts gathered over {R}, {n} wings beating as one.', &
@@ -18864,7 +19345,7 @@ contains
                 'numbered {n}.', 'The Hungry Wind fell still after {1} years.', &
                 'The locusts went back to their solitary ways after {1} years.')
       case (EV_TITAN)
-         imp = 4
+         imp = 4;  tier = 2
          select case (e%b)
          case (0)
             t = pk('At the Hand''s call {T} woke in {R}.', &
@@ -18877,17 +19358,17 @@ contains
                    'The Hand''s star broke open the earth of {R}, and {T} climbed out.')
          end select
       case (EV_ROAD)
-         imp = 4
+         imp = 4;  tier = 1
          t = pk('After {n} steps of seeming madness, {T} began to build a road through {R}.', &
                 'The tread of {T} grew straight in {R}: it was building a highway.', &
                 '{T} ceased its wandering in {R} and laid down a road, straight as a spear.')
       case (EV_CAUSEWAY)
-         imp = 4
+         imp = 4;  tier = 1
          t = pk('{T} raised a causeway of {n} cells across the water to a new land.', &
                 'The road of {T} ran into the sea and did not stop; a causeway joined the ' // &
                 'lands at {R}.', 'At {R} the sea was bridged by {T}.')
       case (EV_TITAN_SLEEP)
-         imp = 3
+         imp = 3;  tier = 1
          t = pk('{T} lay down in {R} and became stone, after {n} steps.', &
                 'In {R} {T} walked no more; it sleeps as a stone landmark.', &
                 '{T} grew still in {R}; the peoples go round it now, as round a hill.')
@@ -18897,6 +19378,7 @@ contains
          imp = 2
          if (e%v > 2000) imp = 3
          if (e%b == 1) imp = 4
+         if (e%b == 1) tier = 1                ! the greatest burning yet seen
          call remember(e, -1, 0)
          select case (trim(e%s))
          case ('hand');  xs(1) = 'the Hand''s fire'
@@ -18909,36 +19391,36 @@ contains
          if (e%a > 0) t = t//' '//commas(e%a)//' of the living perished in it.'
          if (e%b == 1) t = t//' It was the greatest burning yet seen.'
       case (EV_FROST)
-         imp = 4
+         imp = 4;  tier = 3
          call remember(e, -1, 0)
          t = pk('A Great Winter came; the ice held {f} of the world.', &
                 'The white came down from the poles until {f} of {W} lay under ice.', &
                 'Winter would not end. Ice covered {f} of the world.')
       case (EV_SNOWBALL)
-         imp = 5
+         imp = 5;  tier = 3
          call remember(e, -1, 0)
          t = pk('The world turned white from pole to pole, and the sun glanced off it.', &
                 '{W} became a ball of snow; only the warm girdle of the world still breathed.', &
                 'The ice closed over the world. The living huddled in the last warm places.')
       case (EV_THAW)
-         imp = 5
+         imp = 5;  tier = 3
          t = pk('After {nw} years of white, the world thawed and the seas ran free.', &
                 'The ice broke at last, after {nw} years, and green came back to the land.', &
                 'The long white ended after {nw} years.')
       case (EV_HOTHOUSE)
-         imp = 4
+         imp = 4;  tier = 3
          xs(1) = ftoa(e%v, 1)
          t = pk('The air grew hot as a kiln; the mean warmth of the world rose past {1} ' // &
                 'degrees.', 'The world sweltered, its mean warmth above {1} degrees.', &
                 'A furnace age: the seas steamed at {1} degrees.')
       case (EV_DROUGHT)
-         imp = 3
+         imp = 3;  tier = 1
          call remember(e, -1, 0)
          t = pk('Drought lay upon the lands about {R}; the soil lost {f} of its water.', &
                 'The rains failed about {R}, and the rivers shrank.', &
                 'The earth cracked about {R}: drought.')
       case (EV_ICEBRIDGE)
-         imp = 3
+         imp = 3;  tier = 1
          t = pk('The sea froze between two lands near {R}, and a bridge of ice joined them.', &
                 'Near {R} the sea became a road of ice from shore to shore.')
       case (EV_SWEEP)
@@ -18955,12 +19437,12 @@ contains
          call remember(e, -1, 0)
          n = dead_near(e%x, e%y, nint(e%v) + 2)
          if (e%b == 1) then
-            imp = 5
+            imp = 5;  tier = 1
             t = pk('The Hand cast down a star upon {R}.', &
                    'A star fell upon {R} from the Hand.', &
                    'The Hand hurled a burning stone upon {R}.')
          else
-            imp = 4
+            imp = 4;  hc = 2
             t = pk('A star fell upon {R}.', 'Fire fell out of heaven upon {R}.', &
                    'A stone of the sky struck {R}.')
          end if
@@ -18974,11 +19456,12 @@ contains
          if (n > 0) t = t//' '//commas(n)//' perished.'
          if (dust > 0.12d0) t = t//pk(' The sky grew dark.', ' The sun was veiled with dust.')
       case (EV_MIRACLE)
-         ka = e%b;  imp = 2
+         ka = e%b;  imp = 2;  tier = 1
          t = miracle(e, imp)
       case (EV_GENESIS)
-         imp = 5;  rl = RULE_CONWAY
+         imp = 5;  rl = RULE_CONWAY;  tier = 1
          if (trim(e%s) == 'again') then
+            tier = 3
             t = pk('Life was kindled again in {R}: B3/S23, as in the beginning.', &
                    'From the dead world the old law woke again in {R}.')
          else
@@ -18988,12 +19471,12 @@ contains
          end if
       ! ------------------------------------------------------------ realms
       case (EV_REALM)
-         imp = 4;  rl = e%b
+         imp = 4;  rl = e%b;  hc = 2
          t = pk('{B} of {R} gathered under one rule, and {PA} was founded; {KA} held the ' // &
                 'first seat.', 'In {R} arose {PA}, a realm of {B}, with {KA} at its head.', &
                 '{PA} was founded in {R} by {B}. Its first ruler was {KA}.')
       case (EV_REALM_FALL)
-         imp = 4
+         imp = 4;  hc = 1
          xs(1) = numword(nint(e%v))
          if (e%b > 0) then
             t = pk('{PA} fell to {PB}, after {1} years.', &
@@ -19005,11 +19488,31 @@ contains
                    '{PA} is no more. It stood {1} years.')
          end if
       case (EV_REVOLUTION)
-         imp = 4
+         imp = 3;  tier = 1
          xs(1) = lowfirst(gov_word(nint(e%v)));  xs(2) = lowfirst(gov_word(e%b))
-         t = pk('In {pa} the old {1} was cast down, and {PA} was proclaimed.', &
-                'Revolution in {pa}: the {1} gave way to a {2}. It is {PA} now.', &
-                'The people of {pa} rose against the {1}; {PA} stands in its place.')
+         if (nint(e%v) == GOV_THEOCRACY) xs(1) = 'Holy See'
+         if (e%b == GOV_THEOCRACY) xs(2) = 'Holy See'
+         select case (trim(e%s))
+         case ('revolt')                       ! only this is a revolution
+            imp = 4;  hc = 2
+            t = pk('In {pa} the old {1} was cast down, and {PA} was proclaimed.', &
+                   'Revolution in {pa}: the {1} gave way to a {2}. It is {PA} now.', &
+                   'The people of {pa} rose against the {1}; {PA} stands in its place.')
+         case ('grown')
+            t = pk('{pa} had grown too great for a {1}; it is {PA} now.', &
+                   'The {1} of {pa} grew into {PA}.')
+         case ('crowned')
+            t = pk('{KA} took a crown above crowns, and {PA} was proclaimed.', &
+                   'The {1} of {pa} became {PA}; {KA} was crowned.')
+         case ('settled')
+            t = pk('The riders of {pa} built walls and stayed; the {1} became {PA}.', &
+                   '{pa} left the saddle for the plough: the {1} settled, and became {PA}.')
+         case ('restored')
+            t = pk('Order came back to {pa} after the {1}; {PA} rose from it.', &
+                   'The {1} in {pa} was ended, and {PA} was set up in its place.')
+         case default
+            t = pk('The {1} of {pa} gave way to {PA}.', '{pa} took a new rule: {PA}.')
+         end select
       case (EV_SUCCESSION)
          imp = 2
          if (e%a >= 1 .and. e%a <= MAXPOL) xs(1) = seat_word(pol(e%a)%gov)
@@ -19038,29 +19541,36 @@ contains
             imp = 3
             t = t//pk(' The succession was bitterly disputed.', ' Not all bowed to them.')
          end if
+         if (imp >= 3) tier = 1                ! deposed, slain in battle, or disputed
       case (EV_WAR, EV_HOLYWAR)
-         imp = 4
+         imp = 4;  vk = nint(e%v)
          call remember(e, -1, 0)
-         if (e%kind == EV_HOLYWAR) then
+         if (e%kind == EV_WAR .and. vk == 6) then          ! an ally called to arms
+            imp = 3;  tier = 1
+            t = pk('{PA} joined its ally''s war against {PB}.', &
+                   'Called to arms by an ally, {PA} joined the war against {PB}.', &
+                   'True to its oath, {PA} joined its ally''s war upon {PB}.')
+         else if (e%kind == EV_HOLYWAR) then
+            hc = 1
             xs(1) = faith_name(nint(e%v))
             t = pk('In the name of {1}, {PA} declared holy war upon {PB}.', &
                    '{PA} took up the banners of {1} and marched upon {PB}.', &
                    'Holy war: {PA}, sworn to {1}, fell upon {PB}.')
          else
+            hc = 1
             select case (nint(e%v))
             case (1);  xs(1) = 'hungering for their land'
             case (2);  xs(1) = 'in the name of their god'
             case (3);  xs(1) = 'for plunder'
             case (4);  xs(1) = 'out of old border hatred'
             case (5);  xs(1) = 'for vengeance'
-            case (6);  xs(1) = 'called to arms by an ally'
             case default;  xs(1) = 'for reasons none recall'
             end select
             t = pk('{PA} made war upon {PB}, {1}.', 'War: {PA} marched against {PB}, {1}.', &
                    '{PA} rose against {PB}, {1}.', 'The drums of {PA} sounded against {PB}, {1}.')
          end if
       case (EV_PEACE)
-         imp = 3
+         imp = 3;  hc = 1;  vk = nint(e%v)
          if (nint(e%v) == 1 .and. trim(e%s) == 'tribute') then
             t = pk('{PB} bowed to {PA} and paid tribute; the war was ended.', &
                    'The war ended with {PB} paying tribute to {PA}.')
@@ -19072,42 +19582,64 @@ contains
                    'A truce was sworn between {PA} and {PB}; nothing had been won.')
          end if
       case (EV_BATTLE)
-         imp = 3
+         imp = 3;  tier = 1
          call remember(e, -1, 0)
          t = pk('Near {R} the hosts of {PA} broke those of {PB}; {n} fell.', &
                 'A great battle in {R}: {PA} prevailed over {PB}, and {n} were slain.', &
                 'At {R} {PB} was beaten by {PA}. {n} lay on the field.')
       case (EV_CONQUEST)
-         imp = 3
+         imp = 3;  tier = 1
          call remember(e, -1, 0)
          xs(1) = reg_name(nint(e%v))
-         t = pk('{PA} wrested {1} from {PB}.', '{1} passed by the sword from {PB} to {PA}.', &
-                'The armies of {PA} took {1}; {PB} could not hold it.')
+         if (trim(e%s) == 'seat') then          ! the loser's capital
+            imp = 4;  hc = 1;  vk = 1
+            t = pk('{PA} took the seat of {PB}: {1} has fallen.', &
+                   'The seat of {PB} fell: {PA} took {1} by the sword.', &
+                   'The armies of {PA} stormed {1}, the seat of {PB}.')
+         else
+            t = pk('{PA} wrested {1} from {PB}.', '{1} passed by the sword from {PB} to {PA}.', &
+                   'The armies of {PA} took {1}; {PB} could not hold it.')
+         end if
       case (EV_ANNEX)
          imp = 1
          xs(1) = reg_name(nint(e%v))
          t = pk('{PA} took {1} into its keeping without a blow.', &
                 '{1} came under {PA} in peace.')
       case (EV_SECEDE)
-         imp = 3
+         imp = 3;  hc = 1
          xs(1) = 'a province'
          if (e%a >= 1 .and. e%a <= MAXPOL) xs(1) = reg_name(pol(e%a)%capital)
          t = pk('{1} broke away from {PB} and became {PA}.', &
                 '{PB} was sundered: {PA} rose in {1} and would not be ruled.')
       case (EV_ALLIANCE)
-         imp = 3
-         t = pk('{PA} and {PB} swore alliance.', 'A pact of arms between {PA} and {PB}.', &
-                '{PA} and {PB} clasped hands against their enemies.')
+         imp = 3;  tier = 1;  vk = nint(e%v)
+         if (vk == 0) then                      ! broken
+            imp = 2
+            t = pk('The alliance of {PA} and {PB} was broken.', &
+                   '{PA} and {PB} parted ways; their alliance was at an end.', &
+                   'The pact of arms between {PA} and {PB} was undone.')
+         else
+            t = pk('{PA} and {PB} swore alliance.', 'A pact of arms between {PA} and {PB}.', &
+                   '{PA} and {PB} clasped hands against their enemies.')
+         end if
       case (EV_TRADEPACT)
-         imp = 2
-         t = pk('{PA} and {PB} opened their markets to each other.', &
-                'A trade pact between {PA} and {PB}; caravans went to and fro.')
+         imp = 2;  tier = 1;  vk = nint(e%v)
+         if (vk == 0) then                      ! lapsed
+            imp = 1
+            t = pk('The trade pact between {PA} and {PB} lapsed.', &
+                   'The caravans between {PA} and {PB} grew few, and their trade pact lapsed.')
+         else
+            t = pk('{PA} and {PB} opened their markets to each other.', &
+                   'A trade pact between {PA} and {PB}; caravans went to and fro.')
+         end if
       case (EV_SANCTION)
-         imp = 2
-         if (nint(e%v) == 1) then
+         imp = 2;  vk = nint(e%v)
+         if (vk == 1) then
+            tier = 1
             t = pk('{PA} shut its markets against {PB}.', &
                    '{PA} would buy nothing from {PB} and sell it nothing.')
          else
+            imp = 1
             t = pk('{PA} lifted its ban upon the goods of {PB}.', '{PA} forgave {PB} its trade.')
          end if
       case (EV_EMBARGO_END)
@@ -19115,7 +19647,7 @@ contains
          t = pk('{PA} and {PB} opened their gates to each other''s goods again.', &
                 'The embargo between {PA} and {PB} was ended.')
       case (EV_TARIFF)
-         imp = 1
+         imp = 1;  vk = merge(1, 0, e%v >= 1)
          if (e%v >= 1) then
             t = '{PA} barred its gates to the goods of {PB}.'
          else
@@ -19124,7 +19656,7 @@ contains
                    'The customs men of {PA} took {1} in the hundred from the traders of {PB}.')
          end if
       case (EV_FAMINE)
-         imp = 3
+         imp = 3;  tier = 1
          call remember(e, -1, e%a)
          t = pk('Famine in {PA}: {f} of the grain they needed could not be had.', &
                 'The granaries of {PA} stood empty; {f} of its bread was wanting.', &
@@ -19162,7 +19694,7 @@ contains
                 'Traders of {PA} carried {1} to {PB}; some stayed, in {R}.')
       ! ------------------------------------------------------------ faiths
       case (EV_FAITH)
-         imp = 4
+         imp = 4;  hc = 2
          if (e%a >= 1 .and. e%a <= MAXFAITH) then
             xs(1) = cause_phrase(e%a)
          else
@@ -19172,11 +19704,11 @@ contains
                 'A faith was born in {R}: {FA}, {1}.', &
                 '{FA} first gathered in {R}, {1}.')
       case (EV_FAITH_END)
-         imp = 3
+         imp = 3;  tier = 1
          t = pk('{FA} passed from the world; none keep their rites.', &
                 'The last of {FA} died, and their temples stand empty.')
       case (EV_PROPHET)
-         imp = 3
+         imp = 3;  tier = 1
          xs(1) = prophet_name(e%b)
          t = pk('{1} rose among {FA} in {R} and began to prophesy.', &
                 'A prophet came to {FA}: {1}, in {R}.', &
@@ -19187,14 +19719,14 @@ contains
          t = pk('{1}, prophet of {FA}, died.', '{1} of {FA} was gathered to the Hand.', &
                 'The prophet {1} is dead; {FA} mourn.')
       case (EV_PROPHECY)
-         imp = 3;  ka = e%a
+         imp = 3;  ka = e%a;  tier = 1
          if (e%a >= 1 .and. e%a <= MAXPROPH) then
             t = prophecy_text(e%a)
             if (prophs(e%a)%to_hand) imp = 4
          end if
          if (len(t) == 0) t = '{FB} uttered a prophecy.'
       case (EV_PROPHECY_KEPT)
-         imp = 4;  ka = e%a
+         imp = 4;  ka = e%a;  hc = 2
          if (e%a >= 1 .and. e%a <= MAXPROPH) then
             xs(1) = speaker(e%a);  xs(2) = clause(e%a, 2)
             t = pk('The word of {1} was fulfilled: {2}.', &
@@ -19210,7 +19742,7 @@ contains
                       ' And the faithful cried: Praise the Hand!')
          end if
       case (EV_PROPHECY_FAILED)
-         imp = 3;  ka = e%a
+         imp = 3;  ka = e%a;  tier = 1
          if (e%a >= 1 .and. e%a <= MAXPROPH) then
             xs(1) = speaker(e%a);  xs(2) = clause(e%a, 4)
             xs(3) = itoa(int(prophs(e%a)%t_due/TPY))
@@ -19221,24 +19753,24 @@ contains
             t = 'A prophecy of {FB} failed.'
          end if
       case (EV_SCHISM)
-         imp = 3
+         imp = 3;  hc = 2
          t = pk('{FB} were rent asunder; {FA} went their own way.', &
                 'Schism: {FA} broke from {FB}.', &
                 'In bitterness {FA} left {FB}, and each called the other false.')
       case (EV_PRAISE)
-         imp = 3;  ka = e%a
+         imp = 3;  ka = e%a;  tier = 1
          t = pk('In {R} {FA} lifted up their voices: "Praise the Hand!"', &
                 '"Praise the Hand!" sang {FA} in {R}.', &
                 'The Hand''s gift was seen in {R}, and {FA} cried, "Praise the Hand!"')
       case (EV_CONVERT)
-         imp = 3
+         imp = 3;  tier = 1
          xs(1) = faith_name(e%b)
          xs(2) = 'the old ways'
          if (nint(e%v) >= 1) xs(2) = faith_name(nint(e%v))
          t = pk('{PA} turned from {2} to {1}.', '{PA} took {1} for its faith, forsaking {2}.', &
                 'The temples of {PA} were given to {1}.')
       case (EV_HERESY)
-         imp = 2
+         imp = 2;  tier = 1
          t = pk('{FB} named {FA} heretics, and the realms that kept them grew cold to ' // &
                 'each other.', '{FB} cursed {FA} as heretics.')
       case default
@@ -19246,7 +19778,15 @@ contains
          t = 'Something stirred in {R}.'
       end select
       if (len(t) == 0) return
-      call add(e%kind, imp, fill(t), e%x, e%y, rl, ka)
+      top = tier
+      if (hc > 0) top = 2                      ! a headline by its kind, unless it comes too hard
+      select case (hc)                         ! on the last: of war (1), of anything (2), of
+      case (1);  tier = head(2d0, -1)          ! plague (4), of plague or anything (3)
+      case (2);  tier = head(3d0, 0)
+      case (3);  tier = min(head(3d0, 0), head(5d0, EV_PLAGUE))
+      case (4);  tier = head(5d0, EV_PLAGUE)
+      end select
+      call add(e%kind, imp, tier, top, fill(t), e%x, e%y, rl, ka, e%a, e%b, vk)
    end subroutine tell
 
    function miracle(e, imp) result(t)
@@ -19317,7 +19857,8 @@ contains
       do b = -rr, rr
          do a = -rr, rr
             if (a*a + b*b > rr*rr) cycle
-            if (died(wrapi(x + a), wrapj(y + b)) /= 0) dead_near = dead_near + 1
+            if (.not. onmap(x + a, y + b)) cycle
+            if (died(x + a, y + b) /= 0) dead_near = dead_near + 1
          end do
       end do
    end function dead_near
@@ -19469,9 +20010,10 @@ contains
       if (f > 0) then
          xs(2) = trim(fall(f)%place);  xs(3) = trim(fall(f)%title);  xs(4) = itoa(fall(f)%year)
          if (e%b == 1) then
-            t = pk('From the soil of {2}, where {3} were laid down in {4}, they rose again.', &
-                   'The seeds in the soil of {2} woke: {3}, fallen in {4}, live again.', &
-                   'In {2} the earth gave back what it had kept since {4}: {3} rose again.')
+            t = pk('From the soil of {2}, where {3} were laid down in {4}, they rose again ' // &
+                   'and filled the land.', &
+                   'The seeds in the soil of {2} woke: {3}, fallen in {4}, have returned.', &
+                   'In {2} the earth gave back what it had kept since {4}: {3} returned in strength.')
          else
             t = pk('{3}, fallen in {4}, returned to {R} after {1} years.', &
                    'They were thought lost in {4}; yet {3} walk again in {R}.')
@@ -19485,20 +20027,26 @@ contains
    ! ================================================================ Ages
 
    subroutine ages()
-      ! once a year: is the world in a new Age?
-      integer :: k, a, best, nwar, npact, nking, nproph, top, gap
+      ! once a year: is the world in a new Age? (measured against the land, and against the
+      ! number of realms: a world of forty realms is not at war because two of them are)
+      integer :: k, a, best, nwar, npact, nking, nproph, top, gap, nland, nstand
+      real(dp) :: big
       best = 0
       gap = 40
       if (P_AGEGAP > 0) gap = nint(pv(P_AGEGAP))
       if (tick - age_tick < int(gap, i8)*TPY) return
-      nwar = 0;  npact = 0;  nking = 0;  nproph = 0;  top = 0
+      nwar = 0;  npact = 0;  nking = 0;  nproph = 0;  top = 0;  nstand = 0
+      nland = NX*NY/4
+      if (allocated(land)) nland = max(1, count(land > 0))
       do k = 1, npol
          if (pol(k)%state /= 1) cycle
+         nstand = nstand + 1
          if (pol(k)%gov == GOV_KINGDOM .or. pol(k)%gov == GOV_EMPIRE) nking = nking + 1
          nwar = nwar + count(war(k, 1:npol) == 1)
          npact = npact + count(pact(k, 1:npol) == 1)
       end do
       nwar = nwar/2;  npact = npact/2
+      big = max(1d0, nstand/12d0)
       do k = 1, nfaith
          if (faiths(k)%state == 1 .and. faiths(k)%prophet /= 0) nproph = nproph + 1
       end do
@@ -19516,7 +20064,7 @@ contains
       if (best == 0 .or. best == age_now) return
       age_now = best;  age_tick = tick;  had_age(best) = .true.
       age_name = 'the Age of '//trim(AGE_WORD(best))
-      call add(KIND_AGE, 5, card(best), 0, 0, -1, best)
+      call add(KIND_AGE, 5, 3, 3, card(best), 0, 0, -1, best, 0, 0, 0)
    contains
       logical function cond(a)
          integer, intent(in) :: a
@@ -19525,13 +20073,13 @@ contains
          case (AGE_ICE);      cond = ice_frac > 0.5d0
          case (AGE_GREY);     cond = (n_alive > 0 .and. n_sick > 0.04d0*n_alive) .or. &
                                      rec(EV_PLAGUE) >= 3
-         case (AGE_FIRE);     cond = n_burning > 0.004d0*NX*NY .or. rec(EV_FIRE) >= 4
-         case (AGE_ONE);      cond = n_alive > 0.005d0*NX*NY .and. top > 0.8d0*n_alive
-         case (AGE_WARS);     cond = nwar >= 2 .or. rec(EV_WAR) + rec(EV_HOLYWAR) >= 3
+         case (AGE_FIRE);     cond = n_burning > 0.015d0*nland .or. rec(EV_FIRE) >= 4
+         case (AGE_ONE);      cond = n_alive > 0.02d0*nland .and. top > 0.8d0*n_alive
+         case (AGE_WARS);     cond = nwar >= 2*big .or. rec(EV_WAR) + rec(EV_HOLYWAR) >= 3*big
          case (AGE_TITAN);    cond = recent(EV_ROAD, 15)
          case (AGE_PROPHETS); cond = nproph >= 3 .or. rec(EV_PROPHECY) + rec(EV_PROPHET) >= 4
-         case (AGE_KINGS);    cond = nking >= 3
-         case (AGE_TRADE);    cond = npact >= 3 .or. rec(EV_TRADEPACT) + rec(EV_CARAVAN)/4 >= 3
+         case (AGE_KINGS);    cond = nking >= 3*big
+         case (AGE_TRADE);    cond = npact >= 3*big .or. rec(EV_TRADEPACT) + rec(EV_CARAVAN)/4 >= 3*big
          case (AGE_WONDER);   cond = recent(EV_MIRACLE, 5) .and. &
                                      (.not. had_age(AGE_WONDER) .or. rec(EV_MIRACLE) >= 6)
          case (AGE_MANY);     cond = n_notable >= 12 .or. recent(EV_RADIATION, 5)
@@ -19606,24 +20154,30 @@ end module rl_chronicle
 !=======================================================================
 !  rl_render -- the look of the world
 !
-!  Every view of the map, and the planet seen from orbit, drawn into RGBA
+!  Every view of the map, and the world seen from orbit, drawn into RGBA
 !  byte buffers for the web page (or PPM pictures for headless runs).  The
 !  map is an illuminated atlas: land hill-shaded from the north-west and
 !  coloured by its plants, ink-dark seas with luminous shelves and a foam
 !  line, rivers, Ising frost, clouds with their shadows, and a terminator
-!  that sweeps with the sun and shows the shadow of the ring.  The living
-!  are jewels in the hues of their peoples, and on the night side they
-!  glow like the lights of cities.  Colours are mixed in linear light and
-!  encoded through a gamma table; a people's hue is an angle on the OKLCH
-!  wheel, so that equal steps of hue look equally different.  The orbit
-!  view ray-casts the doughnut once into a lookup table; each frame then
-!  only shades it: sunlight and the ring's shadow from the sunlight
-!  tables, glinting seas, an atmosphere at the limb, stars behind.
+!  that sweeps with the sun.  The living are jewels in the hues of their
+!  peoples, and on the night side they glow like the lights of cities.
+!  The realms are inked over it all: each border in the colour of how the
+!  two realms stand -- marching red at war, amber where they hate, white
+!  in truce, gold between allies, teal where they trade -- the fronts of
+!  wars hatched red, fresh bloodshed smouldering in embers.  Toward the
+!  World's Edge the sea darkens to a last line of foam; beyond it a frame
+!  is transparent, for the page to paint the abyss.  Colours are mixed in
+!  linear light and encoded through a gamma table; a people's hue is an
+!  angle on the OKLCH wheel, so that equal steps of hue look equally
+!  different.  The orbit view casts a ray for every pixel at a slab of
+!  the living map adrift among the stars, the sun on its top and its
+!  rocky sides, the sea pouring off every edge into mist.
 !=======================================================================
 module rl_render
    use rl_core
    use rl_soc, only: rowner, pol, npol, front, creed, faiths, nfaith, rfaith, rfaiths, nreg_s, &
-                     sanction, war, VIEW_REALMS, VIEW_FAITHS, VIEW_TRADE
+                     sanction, war, ally, pact, truce, tension, bheat, rel_pq => rel, &
+                     VIEW_REALMS, VIEW_FAITHS, VIEW_TRADE
    implicit none
    private
 
@@ -19643,25 +20197,34 @@ module rl_render
    real(sp), parameter :: KICE = 1/(1.5*TPY)        ! the drawn ice follows the frost over 1.5 years
    real(sp), parameter :: KVERD = 1/(0.75*TPY)      ! the drawn verdure follows the plants over 0.75
    integer(i1), parameter :: NFLASH = 2, NEMBER = 3, NSPARK = 2   ! ticks a flash, ember, glint lasts
-   real(dp), parameter :: EL0 = 28*DEG              ! orbit camera: elevation above the ring plane,
-   real(dp), parameter :: AZ0 = 62*DEG              ! its azimuth from the sun,
-   real(dp), parameter :: DCAM = 9.4d0, FPX = 820d0 ! distance (tube radii) and focal length (px)
-   real(sp), parameter :: HALO = 0.20               ! thickness of the atmosphere (tube radii)
+   real(dp), parameter :: EL0 = 28*DEG              ! orbit camera: elevation above the world's plane,
+   real(dp), parameter :: AZC = -104*DEG            ! its bearing at yaw 0 (from the east: the south,
+                                                    ! a little to the west),
+   real(dp), parameter :: DCAM = 4.3d0, FPX = 700d0 ! distance (half-widths of the world), focal length
+   real(dp), parameter :: SUNAZ = -72*DEG, SUNEL = 38*DEG   ! the sun, to the camera's left, and high
+   real(dp), parameter :: SLABT = 0.075d0           ! thickness of the slab of the world
+   real(dp), parameter :: FLARE = 0.22d0, MISTH = 0.50d0    ! the falls: their lean outward, their fall
    integer,  parameter :: DI(8) = [1, 1, 0, -1, -1, -1, 0, 1]   ! E NE N NW W SW S SE
    integer,  parameter :: DJ(8) = [0, 1, 1, 1, 0, -1, -1, -1]
+   integer,  parameter :: B_PEACE = 1, B_PACT = 2, B_ALLY = 3, B_TRUCE = 4, B_TENSE = 5, B_WAR = 6
+                                                    ! how two realms stand, in the order a border shows it
+   character(len=4), parameter :: CLEAR = achar(0)//achar(0)//achar(0)//achar(0)  ! beyond the edge
 
    ! ================================================================ the palette (sRGB)
    integer, parameter :: Q_INK = 1, Q_PARCH = 2, Q_GOLD = 3, Q_VIOLET = 4, Q_EMBER = 5, &
       Q_SNOW = 6, Q_SEAICE = 7, Q_WALL = 8, Q_CLOUD = 9, Q_CHAR = 10, Q_STONE = 11, &
       Q_RIVER = 12, Q_TUNDRA = 13, Q_FOAM = 14, Q_SICK = 15, Q_PEWTER = 16, Q_LOCG = 17, &
       Q_LOCS = 18, Q_GLASS = 19, Q_LEAD = 20, Q_GOLDHI = 21, Q_SLEEP = 22, Q_FIREG = 23, &
-      Q_RIVER2 = 24, Q_DIM = 25, NPAL = 25
+      Q_RIVER2 = 24, Q_DIM = 25, Q_WAR = 26, Q_TENSE = 27, Q_TRUCE = 28, Q_ALLY = 29, &
+      Q_PACT = 30, Q_SPRAY = 31, NPAL = 31
    integer, parameter :: PAL8(3,NPAL) = reshape([ &
        11,  15,  26,   233, 220, 192,   216, 166,  87,   156, 108, 232,   255, 112,  36, &
       238, 242, 248,   206, 224, 242,   160, 188, 226,   246, 248, 252,    40,  36,  34, &
       194, 184, 160,    58, 122, 176,   126, 122, 110,   168, 206, 212,   150, 176, 112, &
       150, 156, 170,   255, 196,  74,   190, 144,  76,    96,  96, 102,     6,   6,   8, &
-      255, 230, 168,   150, 146, 138,   255,  70,  18,    96, 168, 220,    92,  86,  76], [3,NPAL])
+      255, 230, 168,   150, 146, 138,   255,  70,  18,    96, 168, 220,    92,  86,  76, &
+      237,  51,  31,   240, 160,  48,   242, 242, 242,   232, 195,  90,    63, 184, 175, &
+      232, 244, 250], [3,NPAL])
    real(sp) :: pal(3,NPAL)                          ! the same in linear light
 
    ! ================================================================ lookup tables
@@ -19712,18 +20275,16 @@ module rl_render
    integer,     allocatable :: lab(:,:)             ! labels; lines are drawn where they differ
    integer,     allocatable :: own(:,:), qq(:)      ! stained glass: owner rule, BFS queue
    integer(i1), allocatable :: dst(:,:)
+   integer(i1), allocatable :: bst(:,:), bdir(:,:)  ! realm borders: how the realms across stand (B_*);
+                                                    ! the sides that face them (1 W, 2 E, 4 N, 8 S),
+                                                    ! 16 a war front, 32 a tense border, 64 embers
+   logical :: ink_on = .false.                      ! ink the realms on this frame
    real(sp),    allocatable :: chh(:), hwt(:), ra(:), rb(:), dlt(:,:)   ! the sun now
    integer,     allocatable :: hk0(:), hk1(:)
    real(sp) :: nlv = 0.09                           ! night light, linear
 
-   ! ================================================================ the orbit lookup table
-   real(dp) :: lut_el = -999
-   integer  :: nhit = 0, nhal = 0
-   integer,  allocatable :: hpix(:), halpix(:)      ! pixel (1-based) of each hit, of each halo pixel
-   real(sp), allocatable :: hbt(:,:)                ! (2,nhit) azimuth, tube angle (turns)
-   real(sp), allocatable :: hn(:,:)                 ! (4,nhit) cos/sin tube angle, cos/sin azimuth
-   real(sp), allocatable :: hv(:,:)                 ! (5,nhit) view vector, n.v, coverage
-   real(sp), allocatable :: ohv(:), ohn(:,:)        ! per pixel: halo strength, its normal
+   ! ================================================================ the orbit view
+   logical :: sky_ok = .false.
    character(len=:), allocatable :: obg             ! the sky behind, encoded
 
 contains
@@ -19735,8 +20296,9 @@ contains
       P_NIGHT = reg_param('nightlight', 'Night-side light', 'Heavens', 1d0, 0.05d0, 1d0, &
          'How bright the night side of the map is drawn (1: no night at all).', ui=.false.)
       P_POLITICS = reg_param('politics', 'Realms on the map', 'Heavens', 1d0, 0d0, 1d0, &
-         'Draw the realms on the living map: a wash of each realm''s colour over its land, its '// &
-         'borders in that colour, and borders at war in red.', ui=.false.)
+         'Draw the realms on the living map: a wash of each realm''s colour over its land, and '// &
+         'its borders by how the realms stand: red at war, amber in hatred, white in truce, '// &
+         'gold allied, teal trading.', ui=.false.)
       P_SPARKLE = reg_param('sparkle', 'Sparkle', 'Heavens', 0d0, 0d0, 1d0, &
          '1: births flash, deaths leave embers and frost glints where it forms (busy to watch).', &
          ui=.false.)
@@ -19762,7 +20324,7 @@ contains
    ! ================================================================ start and tick
 
    subroutine render_init()
-      ! palettes and tables (once), the relief layer, memory reset, the orbit table
+      ! palettes and tables (once), the relief layer, memory reset, the sky of the orbit view
       call render_params()
       if (.not. tables_ok) call make_tables()
       call alloc_state()
@@ -19775,7 +20337,7 @@ contains
       call build_static()
       seen_flow = -1
       call prep_rivers()
-      if (.not. allocated(hpix)) call build_orbit(EL0)
+      if (.not. sky_ok) call build_sky()
    end subroutine render_init
 
    subroutine render_tick()
@@ -19839,7 +20401,8 @@ contains
       if (allocated(pres)) then
          deallocate(sbase, shs, svw, sfoam, ph, seen_elev, seen_land, rivs, rcon, pres, &
                     tflash, tember, tspark, seen_ice, prule, cc, lc, ce, jfl, cal, fgl, wk, &
-                    wk2, wk3, lab, own, qq, dst, chh, hwt, ra, rb, dlt, hk0, hk1, sice, sverd)
+                    wk2, wk3, lab, own, qq, dst, bst, bdir, chh, hwt, ra, rb, dlt, hk0, hk1, &
+                    sice, sverd)
       end if
       allocate(sbase(3,NX,NY), shs(NX,NY), svw(NX,NY), sfoam(NX,NY), ph(NX,NY))
       allocate(seen_elev(NX,NY), seen_land(NX,NY), rivs(NX,NY), rcon(NX,NY))
@@ -19847,9 +20410,10 @@ contains
       allocate(sice(NX,NY), sverd(NX,NY))
       allocate(prule(NX,NY), cc(3,NX,NY), lc(3,NX,NY), ce(3,NX,NY), jfl(NX,NY))
       allocate(cal(NX,NY), fgl(NX,NY), wk(NX,NY), wk2(NX,NY), wk3(NX,NY), lab(NX,NY))
-      allocate(own(NX,NY), qq(NX*NY), dst(NX,NY))
+      allocate(own(NX,NY), qq(NX*NY), dst(NX,NY), bst(NX,NY), bdir(NX,NY))
       allocate(chh(NX), hwt(NX), hk0(NX), hk1(NX), ra(NY), rb(NY), dlt(NHOUR+1,NY))
       rivs = 0;  rcon = 0;  cc = 0;  lc = 0;  ce = 0;  jfl = 0;  cal = 0;  fgl = 0;  lab = 0
+      bst = 0;  bdir = 0
    end subroutine alloc_state
 
    ! ================================================================ colour helpers
@@ -20148,7 +20712,8 @@ contains
    end subroutine blur_tile
 
    subroutine blur(f, r)
-      ! box blur of radius r along x, then along y, on the torus (in place)
+      ! box blur of radius r along x, then along y, in place (beyond the edge of the board the
+      ! edge itself is taken again)
       real(sp), intent(inout) :: f(:,:)
       integer,  intent(in)    :: r
       real(sp) :: row(NX), s(NX), q
@@ -20224,7 +20789,8 @@ contains
             nl = 0
             do b = -2, 2
                do a = -2, 2
-                  if (land(wrapi(i + a), wrapj(j + b)) /= 0) then
+                  if (.not. onmap(i + a, j + b)) cycle
+                  if (land(i + a, j + b) /= 0) then
                      if (abs(a) <= 1 .and. abs(b) <= 1) then
                         nl = 2
                      else
@@ -20281,7 +20847,8 @@ contains
             if (rivs(i,j) <= 0) cycle
             best = elev(i,j);  kk = 0
             do k = 1, 8
-               ii = wrapi(i + DI(k));  jj = wrapj(j + DJ(k))
+               ii = i + DI(k);  jj = j + DJ(k)
+               if (.not. onmap(ii, jj)) cycle
                if (land(ii,jj) == 1 .and. rivs(ii,jj) <= 0) cycle
                x = elev(ii,jj)
                if (land(ii,jj) /= 1) x = min(x, -1.)
@@ -20291,7 +20858,7 @@ contains
             end do
             if (kk == 0) cycle
             rcon(i,j) = ibset(rcon(i,j), kk - 1)
-            ii = wrapi(i + DI(kk));  jj = wrapj(j + DJ(kk))
+            ii = i + DI(kk);  jj = j + DJ(kk)
             if (rivs(ii,jj) > 0) rcon(ii,jj) = ibset(rcon(ii,jj), mod(kk + 3, 8))
          end do
       end do
@@ -20332,8 +20899,8 @@ contains
             if (fire(i,j) <= 0) cycle
             do b = -2, 2
                do a = -2, 2
-                  fgl(wrapi(i + a), wrapj(j + b)) = fgl(wrapi(i + a), wrapj(j + b)) + &
-                     0.22/(1 + a*a + b*b)
+                  if (.not. onmap(i + a, j + b)) cycle
+                  fgl(i + a, j + b) = fgl(i + a, j + b) + 0.22/(1 + a*a + b*b)
                end do
             end do
          end do
@@ -20369,7 +20936,7 @@ contains
 
    pure real(sp) function daylight(c, dl)
       ! how lit the map is: a soft terminator from the sun's height (c = cos of its zenith
-      ! angle), dimmed by the shadow of the ring (dl, the sunlight table there)
+      ! angle), dimmed wherever the sunlight table (dl) holds less light than that
       real(sp), intent(in) :: c, dl
       real(sp) :: s, t
       daylight = smooth(-0.07, 0.14, c)
@@ -20379,6 +20946,15 @@ contains
          daylight = daylight*(s*t + 1 - t)
       end if
    end function daylight
+
+   pure real(sp) function rim_dark(i, j)
+      ! how much light the open sea keeps near the World's Edge: all of it well inside, a
+      ! third on the last cells, ragged with noise so the darkness does not look ruled
+      integer, intent(in) :: i, j
+      real(sp) :: d
+      d = edge_dist(i, j) + 2.5*(nzs(iand(3*i, 63), iand(3*j, 63)) - 0.5)
+      rim_dark = 0.34 + 0.66*smooth(-1., real(RIMW + 5, sp), d)
+   end function rim_dark
 
    ! ================================================================ the views, cell by cell
 
@@ -20474,7 +21050,13 @@ contains
                   end if
                end if
             end if
-            ! ---- the realms: a wash of each one's colour, its border bright, at war red
+            ! ---- the World's Edge: the open sea darkens where it is about to pour off the world
+            if (land(i,j) == 0 .and. edge_dist(i, j) < RIMW + 5) then
+               x = rim_dark(i, j)
+               x = x + (1 - x)*0.45*min(1., y)           ! an ice shelf darkens less
+               r = r*x*(0.88 + 0.12*x);  g = g*x*(0.94 + 0.06*x);  b = b*x
+            end if
+            ! ---- the realms: a wash of each one's colour (their borders are inked on the frame)
             if (pol_on .and. .not. orb .and. land(i,j) >= 1) call realm_ink(i, j, r, g, b)
             ! ---- clouds and their shadows (a cloud to the north-west shades the ground)
             sa = cal(im(i),jp(j))
@@ -20572,7 +21154,7 @@ contains
                ce(1,i,j) = er;  ce(2,i,j) = eg;  ce(3,i,j) = eb
                cycle
             end if
-            ! ---- night: the terminator, the ring's shadow, a warm twilight band
+            ! ---- night: the terminator and a warm twilight band
             c = ra(j)*chh(i) + rb(j)
             dl = dlt(hk0(i),j)*(1 - hwt(i)) + dlt(hk1(i),j)*hwt(i)
             day = daylight(c, dl)
@@ -20925,32 +21507,13 @@ contains
 
    ! ================================================================ society's views
 
-   subroutine glow_fronts()
-      ! the fronts of wars smoulder, steadily, in a band either side of the contested border
-      integer  :: i, j
-      real(sp), parameter :: A = 0.24
-      if (.not. allocated(front)) return
-      if (pval(P_POLITICS, 1d0) < 0.5) return
-      do j = 1, NY
-         do i = 1, NX
-            if (front(i,j) == 0 .or. land(i,j) == 0) cycle
-            cc(1,i,j) = cc(1,i,j) + A*(0.95 - cc(1,i,j))
-            cc(2,i,j) = cc(2,i,j) + A*(0.30 - cc(2,i,j))
-            cc(3,i,j) = cc(3,i,j) + A*(0.12 - cc(3,i,j))
-         end do
-      end do
-   end subroutine glow_fronts
-
    subroutine realm_ink(i, j, r, g, b)
-      ! a realm's mark on its land: a light wash of its colour, and at its border a bright
-      ! line of that colour -- red where the realm across the border is an enemy.  A
-      ! famished realm's land is drawn wan.
+      ! a realm's mark on its land: a light wash of its colour (its borders are inked on
+      ! the frame, by ink_px).  A famished realm's land is drawn wan.
       integer,  intent(in)    :: i, j
       real(sp), intent(inout) :: r, g, b
-      integer, parameter :: NI(4) = [1, -1, 0, 0], NJ(4) = [0, 0, 1, -1]
-      integer  :: p, q, hh, k, a2, b2
-      real(sp) :: x, w, cr, cg, cb
-      logical  :: edge, foe
+      integer  :: p, hh
+      real(sp) :: x, w
       p = owner_at(i, j)
       if (p == 0) return
       hh = modulo(nint(pol(p)%hue), 360)
@@ -20960,25 +21523,163 @@ contains
       end if
       w = 0.2
       r = r + w*(jew(1,hh,9) - r);  g = g + w*(jew(2,hh,9) - g);  b = b + w*(jew(3,hh,9) - b)
-      edge = .false.;  foe = .false.
-      do k = 1, 4
-         a2 = wrapi(i + NI(k));  b2 = wrapj(j + NJ(k))
-         if (land(a2,b2) == 0) cycle               ! the coast draws itself
-         q = owner_at(a2, b2)
-         if (q == p) cycle
-         edge = .true.
-         if (q > 0) then
-            if (war(p,q) /= 0) foe = .true.
-         end if
-      end do
-      if (.not. edge) return
-      if (foe) then
-         cr = 0.93;  cg = 0.20;  cb = 0.12;  w = 0.92
-      else
-         cr = jew(1,hh,12);  cg = jew(2,hh,12);  cb = jew(3,hh,12);  w = 0.78
-      end if
-      r = r + w*(cr - r);  g = g + w*(cg - g);  b = b + w*(cb - b)
    end subroutine realm_ink
+
+   subroutine prep_borders()
+      ! the realms on this frame: for every cell of a realm's land that touches another
+      ! realm, or land no one holds, how the two stand (bst) and which of its sides face
+      ! the other; and the war fronts, the tense borders and fresh bloodshed (bdir)
+      integer, parameter :: NI(4) = [-1, 1, 0, 0], NJ(4) = [0, 0, 1, -1]   ! W E N S
+      integer :: i, j, k, p, q, a2, b2, st, fl
+      bst = 0;  bdir = 0
+      if (.not. allocated(rowner) .or. .not. allocated(front)) return
+      if (.not. allocated(tension) .or. .not. allocated(bheat)) return
+      do j = 1, NY
+         do i = 1, NX
+            fl = 0;  st = 0
+            if (land(i,j) >= 1) then
+               p = owner_at(i, j)
+               if (p > 0) then
+                  do k = 1, 4
+                     a2 = i + NI(k);  b2 = j + NJ(k)
+                     if (.not. onmap(a2, b2)) cycle
+                     if (land(a2,b2) == 0) cycle          ! the coast draws itself
+                     q = owner_at(a2, b2)
+                     if (q == p) cycle
+                     st = max(st, stand(p, q))
+                     fl = ior(fl, ishft(1, k - 1))
+                  end do
+               end if
+               if (front(i,j) /= 0) fl = ior(fl, 16)
+               if (tension(i,j) /= 0) fl = ior(fl, 32)
+            end if
+            if (bheat(i,j) > 0.03) fl = ior(fl, 64)
+            bst(i,j) = int(st, i1);  bdir(i,j) = int(fl, i1)
+         end do
+      end do
+   contains
+      integer function stand(p_, q_)
+         ! how realm p_ stands with q_ (0: no one), war first, then truce, alliance, pact,
+         ! hatred, peace
+         integer, intent(in) :: p_, q_
+         stand = B_PEACE
+         if (q_ <= 0) return
+         if (war(p_,q_) /= 0) then
+            stand = B_WAR
+         else if (truce(p_,q_) > tick) then
+            stand = B_TRUCE
+         else if (ally(p_,q_) /= 0) then
+            stand = B_ALLY
+         else if (pact(p_,q_) /= 0) then
+            stand = B_PACT
+         else if (rel_pq(p_,q_) < -30) then
+            stand = B_TENSE
+         end if
+      end function stand
+   end subroutine prep_borders
+
+   subroutine ink_px(i, j, xx, yy, s, r, g, b)
+      ! the realms' ink on pixel (xx, yy) of the s x s tile of cell (i,j): a war front
+      ! hatched red, a tense border faintly hatched amber; the border itself in the colour
+      ! of how the realms across stand (2 cells wide, one each side, at zoom 1); embers
+      ! smouldering where blood was shed
+      integer,  intent(in)    :: i, j, xx, yy, s
+      real(sp), intent(inout) :: r, g, b
+      integer  :: fl, t, gx, gy, bw, hh, kv, p
+      real(sp) :: a, cr, cg, cb, e, v
+      logical  :: on
+      fl = bdir(i,j)
+      gx = (i - 1)*s + xx;  gy = (NY - j)*s + yy      ! pixel of the whole map: hatching holds still
+      if (btest(fl, 4)) then
+         a = merge(0.62, 0.14, modulo(gx + gy, 6) < 2)
+         r = r + a*(pal(1,Q_WAR) - r);  g = g + a*(pal(2,Q_WAR) - g);  b = b + a*(pal(3,Q_WAR) - b)
+      else if (btest(fl, 5)) then
+         if (modulo(gx - gy, 8) == 0) then
+            a = 0.32
+            r = r + a*(pal(1,Q_TENSE) - r);  g = g + a*(pal(2,Q_TENSE) - g)
+            b = b + a*(pal(3,Q_TENSE) - b)
+         end if
+      end if
+      if (bst(i,j) > 0) then
+         bw = merge(s, s/2 + 1, s <= 2)
+         on = (btest(fl, 0) .and. xx < bw) .or. (btest(fl, 1) .and. xx >= s - bw) .or. &
+              (btest(fl, 2) .and. yy < bw) .or. (btest(fl, 3) .and. yy >= s - bw)
+         if (on) then
+            if (iand(fl, 12) == 0) then
+               t = j                                 ! a border running north and south
+            else if (iand(fl, 3) == 0) then
+               t = i                                 ! ... east and west
+            else
+               t = i + j                             ! a corner
+            end if
+            p = owner_at(i, j)
+            hh = modulo(nint(pol(max(p, 1))%hue), 360)
+            cr = jew(1,hh,12);  cg = jew(2,hh,12);  cb = jew(3,hh,12);  a = 0.78
+            select case (int(bst(i,j)))
+            case (B_WAR)                             ! red dashes marching along the front
+               if (modulo(t + int(mod(tick/2, 4_i8)), 4) < 2) then
+                  cr = min(1., 1.3*pal(1,Q_WAR));  cg = 1.3*pal(2,Q_WAR);  cb = 1.3*pal(3,Q_WAR)
+                  a = 0.97
+               else
+                  cr = 0.12*pal(1,Q_WAR);  cg = 0.12*pal(2,Q_WAR);  cb = 0.12*pal(3,Q_WAR);  a = 0.85
+               end if
+            case (B_TENSE)                           ! amber dashes, still
+               if (modulo(t, 4) < 2) then
+                  cr = pal(1,Q_TENSE);  cg = pal(2,Q_TENSE);  cb = pal(3,Q_TENSE);  a = 0.92
+               else
+                  cr = 0.3*pal(1,Q_TENSE);  cg = 0.3*pal(2,Q_TENSE);  cb = 0.3*pal(3,Q_TENSE)
+                  a = 0.55
+               end if
+            case (B_TRUCE)                           ! white dots on a faint line of its own colour
+               if (modulo(t, 3) == 0) then
+                  cr = pal(1,Q_TRUCE);  cg = pal(2,Q_TRUCE);  cb = pal(3,Q_TRUCE);  a = 0.95
+               else
+                  a = 0.35
+               end if
+            case (B_ALLY)                            ! solid gold
+               cr = pal(1,Q_ALLY);  cg = pal(2,Q_ALLY);  cb = pal(3,Q_ALLY);  a = 0.92
+            case (B_PACT)                            ! teal dots
+               if (modulo(t, 2) == 0) then
+                  cr = pal(1,Q_PACT);  cg = pal(2,Q_PACT);  cb = pal(3,Q_PACT);  a = 0.92
+               else
+                  a = 0.35
+               end if
+            end select
+            r = r + a*(cr - r);  g = g + a*(cg - g);  b = b + a*(cb - b)
+         end if
+      end if
+      if (btest(fl, 6)) then
+         ! a dull glow, and sparks that come and go from one tick to the next
+         e = min(1., bheat(i,j)/2)
+         r = r + 0.12*e*pal(1,Q_EMBER);  g = g + 0.12*e*pal(2,Q_EMBER);  b = b + 0.12*e*pal(3,Q_EMBER)
+         v = nzw(iand(gx/2 + 37*int(mod(tick, 64_i8)), 63), iand(gy/2 + 11*int(mod(tick/2, 64_i8)), 63))
+         a = 0.05 + 0.25*e
+         if (v < a) then
+            kv = 6 + int(13*(1 - v/a))
+            v = 0.5 + 0.9*e
+            r = r + v*bbd(1,kv);  g = g + v*bbd(2,kv);  b = b + v*bbd(3,kv)
+         end if
+      end if
+   end subroutine ink_px
+
+   subroutine edge_px(i, j, xx, yy, s, r, g, b)
+      ! the last cell of the world: a thin line of foam on its outer side, where the sea
+      ! goes over the edge
+      integer,  intent(in)    :: i, j, xx, yy, s
+      real(sp), intent(inout) :: r, g, b
+      integer  :: d, fw
+      real(sp) :: a
+      fw = max(1, s/4)
+      d = s
+      if (i == 1) d = min(d, xx)
+      if (i == NX) d = min(d, s - 1 - xx)
+      if (j == NY) d = min(d, yy)
+      if (j == 1) d = min(d, s - 1 - yy)
+      if (d >= 2*fw) return
+      a = merge(0.88, 0.32, d < fw)
+      a = a*(0.82 + 0.18*nzw(iand(i + j + int(mod(tick, 64_i8)), 63), iand(xx + 5*yy + 3*i + 7*j, 63)))
+      r = r + a*(pal(1,Q_SPRAY) - r);  g = g + a*(pal(2,Q_SPRAY) - g);  b = b + a*(pal(3,Q_SPRAY) - b)
+   end subroutine edge_px
 
    integer function owner_at(i, j)
       ! the realm holding cell (i,j), 0 if none
@@ -21018,7 +21719,8 @@ contains
          end if
          if (r < 1 .or. r > nregion) cycle
          do a = 1, 5
-            i = wrapi(regs(r)%cx + MI(a));  j = wrapj(regs(r)%cy + MJ(a))
+            i = regs(r)%cx + MI(a);  j = regs(r)%cy + MJ(a)
+            if (.not. onmap(i, j)) cycle
             b = merge(Q_GOLDHI, Q_GOLD, a == 1)
             cc(1,i,j) = pal(1,b);  cc(2,i,j) = pal(2,b);  cc(3,i,j) = pal(3,b)
          end do
@@ -21028,6 +21730,7 @@ contains
    subroutine pass_realms()
       ! REALMS: every region in the arms of the realm that holds it, lead lines at its
       ! borders, the living a little brighter, the fronts of its wars aglow, seats in gold
+      ! (the borders by how the realms stand, the hatching and the embers: ink_px)
       integer  :: i, j, p, hh
       real(sp) :: r, g, b, x, f, a
       f = 0.75 + 0.25*sin(0.35*real(modulo(tick, 1000_i8), sp))
@@ -21040,7 +21743,7 @@ contains
                if (alive(i,j) /= 0) x = x*1.25
                r = jew(1,hh,7)*x;  g = jew(2,hh,7)*x;  b = jew(3,hh,7)*x
                if (front(i,j) /= 0) then
-                  a = 0.55*f
+                  a = 0.30*f
                   r = r + a*(0.98 - r);  g = g + a*(0.30 - g);  b = b + a*(0.10 - b)
                end if
                lab(i,j) = p + 3
@@ -21192,9 +21895,10 @@ contains
    ! ================================================================ the map, pixel by pixel
 
    subroutine render_map(view, zoom, cx, cy, hl, buf, w, h)
-      ! one view of the map as RGBA bytes, north up: zoom 1 shows the whole torus at
-      ! 2 px/cell, zoom 2 or 4 a window about the cell (cx, cy) at 2*zoom px/cell, wrapping.
-      ! Pixel (px, py) shows cell i = cx - NX/(2z) + 1 + px/(2z), j = cy + NY/(2z) - py/(2z).
+      ! one view of the map as RGBA bytes, north up: a window about the cell (cx, cy) at
+      ! 2*zoom px/cell, zoom 1 as wide as the whole world.  Pixel (px, py) shows cell
+      ! i = cx - NX/(2z) + 1 + px/(2z), j = cy + NY/(2z) - py/(2z); a pixel beyond the edge
+      ! of the world is clear (alpha 0), for the page to paint the abyss there.
       integer, intent(in) :: view, zoom, cx, cy, hl
       character(len=:), allocatable, intent(inout) :: buf
       integer, intent(out) :: w, h
@@ -21211,6 +21915,7 @@ contains
       i0 = cx - NX/(2*z) + 1
       j0 = cy + NY/(2*z)
       call check_static()
+      ink_on = .false.
       select case (view)
       case (VIEW_PEOPLES)
          call pass_peoples(hl)
@@ -21245,6 +21950,8 @@ contains
          call pix_flat(VIEW_RELIEF, z, .true., i0, j0, buf, w, h)
       case (VIEW_REALMS)
          call pass_realms()
+         ink_on = .true.
+         call prep_borders()
          call pix_flat(VIEW_PEOPLES, z, .false., i0, j0, buf, w, h)
       case (VIEW_FAITHS)
          call pass_faiths()
@@ -21254,7 +21961,8 @@ contains
          call pix_flat(VIEW_PEOPLES, z, .false., i0, j0, buf, w, h)
       case default
          call pass_living(hl, z > 1, .false.)
-         call glow_fronts()
+         ink_on = pval(P_POLITICS, 1d0) > 0.5
+         if (ink_on) call prep_borders()
          call pix_jewels(z, i0, j0, buf, w, h, .true.)
          call draw_locusts(z, i0, j0, buf, w, h)
          call draw_titans(z, i0, j0, buf, w, h)
@@ -21264,30 +21972,46 @@ contains
    subroutine pix_jewels(z, i0, j0, buf, w, h, living)
       ! the ground (smooth when zoomed) with the living drawn on it as jewels: zoom 1 a
       ! 2x2 tile per cell (highlight to the north-west, rim to the south-east), zoomed a
-      ! bevelled gem with rounded corners wherever it borders other people or nothing
+      ! bevelled gem with rounded corners wherever it borders other people or nothing.
+      ! Over it the realms' ink and the foam at the World's Edge; beyond the edge, nothing.
       integer, intent(in) :: z, i0, j0, w, h
       character(len=*), intent(inout) :: buf
       logical, intent(in) :: living
-      integer  :: a, b, i, j, ir, jb, o1, o2, rl, s, px, py, i2, j2, xx, yy, fl, t, o
+      integer  :: a, b, i, j, ir, jb, o1, o2, rl, s, px, py, i2, j2, xx, yy, fl, t, o, k
       integer  :: col(0:w-1), ci2(0:w-1), sx(0:w-1)
+      logical  :: onx(0:w-1)
       real(sp) :: wx(0:w-1)
-      real(sp) :: r, g, bl, vx, vy, w00, w10, w01, w11, x, br, bg, bb
-      logical  :: dr, db, dd, cut, rim
-      character(len=4) :: q, qh, qm, qr
+      real(sp) :: r, g, bl, vx, vy, w00, w10, w01, w11, x, br, bg, bb, pr(4), pg(4), pb(4)
+      logical  :: dr, db, dd, cut, rim, spec
+      character(len=4) :: q
       if (z == 1) then
          do a = 0, NX - 1
-            col(a) = wrapi(i0 + a)
+            col(a) = wrapi(i0 + a);  onx(a) = onmap(i0 + a, 1)
          end do
          do b = 0, NY - 1
-            j = wrapj(j0 - b);  jb = jm(j)
             o1 = 8*b*w;  o2 = o1 + 4*w
+            if (.not. onmap(1, j0 - b)) then
+               buf(o1+1:o2+4*w) = repeat(CLEAR, 2*w)
+               cycle
+            end if
+            j = j0 - b;  jb = jm(j)
             do a = 0, NX - 1
-               i = col(a)
                o = 8*a
+               if (.not. onx(a)) then
+                  buf(o1+o+1:o1+o+8) = CLEAR//CLEAR;  buf(o2+o+1:o2+o+8) = CLEAR//CLEAR
+                  cycle
+               end if
+               i = col(a)
+               spec = i == 1 .or. i == NX .or. j == 1 .or. j == NY
+               if (ink_on) spec = spec .or. bdir(i,j) /= 0
                if (alive(i,j) == 0) then
-                  q = enc(cc(1,i,j), cc(2,i,j), cc(3,i,j))
-                  buf(o1+o+1:o1+o+4) = q;  buf(o1+o+5:o1+o+8) = q
-                  buf(o2+o+1:o2+o+4) = q;  buf(o2+o+5:o2+o+8) = q
+                  pr = cc(1,i,j);  pg = cc(2,i,j);  pb = cc(3,i,j)
+                  if (.not. spec) then
+                     q = enc(pr(1), pg(1), pb(1))
+                     buf(o1+o+1:o1+o+4) = q;  buf(o1+o+5:o1+o+8) = q
+                     buf(o2+o+1:o2+o+4) = q;  buf(o2+o+5:o2+o+8) = q
+                     cycle
+                  end if
                else
                   ir = ip(i)
                   if (living) then
@@ -21302,27 +22026,28 @@ contains
                      dr = alive(ir,j) == 0;  db = alive(i,jb) == 0;  dd = alive(ir,jb) == 0
                   end if
                   r = lc(1,i,j);  g = lc(2,i,j);  bl = lc(3,i,j)
-                  qh = enc(r + 0.42*(1 - r), g + 0.42*(1 - g), bl + 0.42*(1 - bl))
-                  q = enc(r, g, bl)
-                  qm = enc(0.72*r, 0.72*g, 0.72*bl)
-                  qr = enc(0.46*r, 0.46*g, 0.46*bl)
-                  buf(o1+o+1:o1+o+4) = qh
-                  if (dr) then
-                     buf(o1+o+5:o1+o+8) = qm
-                  else
-                     buf(o1+o+5:o1+o+8) = q
-                  end if
-                  if (db) then
-                     buf(o2+o+1:o2+o+4) = qm
-                  else
-                     buf(o2+o+1:o2+o+4) = q
-                  end if
-                  if (dr .or. db .or. dd) then
-                     buf(o2+o+5:o2+o+8) = qr
-                  else
-                     buf(o2+o+5:o2+o+8) = q
-                  end if
+                  pr(1) = r + 0.42*(1 - r);  pg(1) = g + 0.42*(1 - g);  pb(1) = bl + 0.42*(1 - bl)
+                  x = merge(0.72, 1., dr)
+                  pr(2) = x*r;  pg(2) = x*g;  pb(2) = x*bl
+                  x = merge(0.72, 1., db)
+                  pr(3) = x*r;  pg(3) = x*g;  pb(3) = x*bl
+                  x = merge(0.46, 1., dr .or. db .or. dd)
+                  pr(4) = x*r;  pg(4) = x*g;  pb(4) = x*bl
                end if
+               if (spec) then
+                  do k = 1, 4
+                     xx = mod(k - 1, 2);  yy = (k - 1)/2
+                     if (ink_on) then
+                        if (bdir(i,j) /= 0) call ink_px(i, j, xx, yy, 2, pr(k), pg(k), pb(k))
+                     end if
+                     if (i == 1 .or. i == NX .or. j == 1 .or. j == NY) &
+                        call edge_px(i, j, xx, yy, 2, pr(k), pg(k), pb(k))
+                  end do
+               end if
+               buf(o1+o+1:o1+o+4) = enc(pr(1), pg(1), pb(1))
+               buf(o1+o+5:o1+o+8) = enc(pr(2), pg(2), pb(2))
+               buf(o2+o+1:o2+o+4) = enc(pr(3), pg(3), pb(3))
+               buf(o2+o+5:o2+o+8) = enc(pr(4), pg(4), pb(4))
             end do
          end do
          return
@@ -21332,7 +22057,7 @@ contains
       t = merge(1, 2, s == 4)
       do px = 0, w - 1
          a = px/s;  xx = mod(px, s)
-         col(px) = wrapi(i0 + a);  sx(px) = xx
+         col(px) = wrapi(i0 + a);  sx(px) = xx;  onx(px) = onmap(i0 + a, 1)
          x = (xx + 0.5)/s - 0.5
          if (x < 0) then
             ci2(px) = im(col(px));  wx(px) = -x
@@ -21342,15 +22067,23 @@ contains
       end do
       do py = 0, h - 1
          b = py/s;  yy = mod(py, s)
-         j = wrapj(j0 - b)
+         o1 = 4*py*w
+         if (.not. onmap(1, j0 - b)) then
+            buf(o1+1:o1+4*w) = repeat(CLEAR, w)
+            cycle
+         end if
+         j = j0 - b
          x = (yy + 0.5)/s - 0.5
          if (x < 0) then
             j2 = jp(j);  vy = -x
          else
             j2 = jm(j);  vy = x
          end if
-         o1 = 4*py*w
          do px = 0, w - 1
+            if (.not. onx(px)) then
+               buf(o1+4*px+1:o1+4*px+4) = CLEAR
+               cycle
+            end if
             i = col(px);  i2 = ci2(px);  vx = wx(px);  xx = sx(px)
             w00 = (1 - vx)*(1 - vy);  w10 = vx*(1 - vy);  w01 = (1 - vx)*vy;  w11 = vx*vy
             r = w00*cc(1,i,j) + w10*cc(1,i2,j) + w01*cc(1,i,j2) + w11*cc(1,i2,j2)
@@ -21401,6 +22134,10 @@ contains
                   end if
                end if
             end if
+            if (ink_on) then
+               if (bdir(i,j) /= 0) call ink_px(i, j, xx, yy, s, r, g, bl)
+            end if
+            if (i == 1 .or. i == NX .or. j == 1 .or. j == NY) call edge_px(i, j, xx, yy, s, r, g, bl)
             buf(o1+4*px+1:o1+4*px+4) = enc(r, g, bl)
          end do
       end do
@@ -21455,18 +22192,20 @@ contains
 
    subroutine pix_flat(view, z, smoothed, i0, j0, buf, w, h)
       ! a cell-coloured view: smooth (bilinear) or crisp when zoomed, with lines drawn
-      ! wherever the labels of neighbouring pixels differ (isotherms, coasts, lead, walls)
+      ! wherever the labels of neighbouring pixels differ (isotherms, coasts, lead, walls);
+      ! the realms' ink over it when asked, foam at the World's Edge, and beyond it nothing
       integer, intent(in) :: view, z, i0, j0, w, h
       logical, intent(in) :: smoothed
       character(len=*), intent(inout) :: buf
       integer  :: col(0:w-1), ci2(0:w-1), sx(0:w-1), lrow(-1:w,0:2)
+      logical  :: onx(0:w-1)
       real(sp) :: wx(0:w-1)
       integer  :: px, py, a, b, i, j, j2, i2, s, xx, yy, o1, st, k0, k1, k2, la
       real(sp) :: r, g, bl, vx, vy, w00, w10, w01, w11, x, lr, lg, lb, al
       s = 2*z
       do px = 0, w - 1
          a = px/s;  xx = mod(px, s)
-         col(px) = wrapi(i0 + a);  sx(px) = xx
+         col(px) = wrapi(i0 + a);  sx(px) = xx;  onx(px) = onmap(i0 + a, 1)
          x = (xx + 0.5)/s - 0.5
          if (x < 0) then
             ci2(px) = im(col(px));  wx(px) = -x
@@ -21480,7 +22219,12 @@ contains
          k0 = mod(py, 3);  k1 = mod(py + 1, 3);  k2 = mod(py + 2, 3)
          call label_row(py + 1, lrow(:,k2))
          b = py/s;  yy = mod(py, s)
-         j = wrapj(j0 - b)
+         o1 = 4*py*w
+         if (.not. onmap(1, j0 - b)) then
+            buf(o1+1:o1+4*w) = repeat(CLEAR, w)
+            cycle
+         end if
+         j = j0 - b
          x = (yy + 0.5)/s - 0.5
          if (x < 0) then
             j2 = jp(j);  vy = -x
@@ -21488,8 +22232,11 @@ contains
             j2 = jm(j);  vy = x
          end if
          if (.not. smoothed .or. z == 1) vy = 0
-         o1 = 4*py*w
          do px = 0, w - 1
+            if (.not. onx(px)) then
+               buf(o1+4*px+1:o1+4*px+4) = CLEAR
+               cycle
+            end if
             i = col(px)
             if (smoothed .and. z > 1) then
                i2 = ci2(px);  vx = wx(px)
@@ -21515,21 +22262,23 @@ contains
                call line_rgb(st, lr, lg, lb, al)
                r = r + al*(lr - r);  g = g + al*(lg - g);  bl = bl + al*(lb - bl)
             end if
+            if (ink_on) then
+               if (bdir(i,j) /= 0) call ink_px(i, j, sx(px), yy, s, r, g, bl)
+            end if
+            if (i == 1 .or. i == NX .or. j == 1 .or. j == NY) call edge_px(i, j, sx(px), yy, s, r, g, bl)
             buf(o1+4*px+1:o1+4*px+4) = enc(r, g, bl)
          end do
       end do
    contains
       subroutine label_row(py_, row)
-         ! labels of the pixels of row py_ (with one pixel either side, wrapping)
+         ! labels of the pixels of row py_ (with one pixel either side); beyond the frame or
+         ! the edge of the world the nearest pixel of the world is taken again, so that no
+         ! line is drawn along the edge
          integer, intent(in)  :: py_
          integer, intent(out) :: row(-1:w)
          integer  :: p, jj, jj2, yy_, ii, q
          real(sp) :: y_, wy_, t_, lf, wx_
-         if (py_ < 0 .or. py_ >= h) then
-            q = modulo(py_, h)
-         else
-            q = py_
-         end if
+         q = max(0, min(h - 1, py_))
          jj = wrapj(j0 - q/s);  yy_ = mod(q, s)
          y_ = (yy_ + 0.5)/s - 0.5
          if (y_ < 0) then
@@ -21551,7 +22300,7 @@ contains
                row(p) = lab(ii,jj)
             end if
          end do
-         row(-1) = row(w-1);  row(w) = row(0)
+         row(-1) = row(0);  row(w) = row(w-1)
       end subroutine label_row
    end subroutine pix_flat
 
@@ -21611,7 +22360,8 @@ contains
    ! ================================================================ sprites
 
    subroutine blend_px(buf, w, h, px, py, r, g, b, a, add)
-      ! mix (or, with add, add) a linear colour into one pixel of the buffer
+      ! mix (or, with add, add) a linear colour into one pixel of the buffer (not into the
+      ! clear pixels beyond the edge of the world)
       character(len=*), intent(inout) :: buf
       integer,  intent(in) :: w, h, px, py
       real(sp), intent(in) :: r, g, b, a
@@ -21620,6 +22370,7 @@ contains
       real(sp) :: cr, cg, cb
       if (px < 0 .or. px >= w .or. py < 0 .or. py >= h) return
       o = 4*(py*w + px)
+      if (buf(o+4:o+4) == CLEAR(1:1)) return
       cr = gdec(iachar(buf(o+1:o+1)));  cg = gdec(iachar(buf(o+2:o+2)))
       cb = gdec(iachar(buf(o+3:o+3)))
       if (add) then
@@ -21635,10 +22386,7 @@ contains
       real(sp), intent(in)  :: x, y
       integer,  intent(in)  :: z, i0, j0
       real(sp), intent(out) :: xs, ys
-      real(sp) :: u, v
-      u = modulo(x - (i0 - 0.5), real(NX, sp))
-      v = modulo((j0 + 0.5) - y, real(NY, sp))
-      xs = u*2*z;  ys = v*2*z
+      xs = (x - (i0 - 0.5))*2*z;  ys = ((j0 + 0.5) - y)*2*z
    end subroutine screen_xy
 
    subroutine draw_locusts(z, i0, j0, buf, w, h)
@@ -21652,7 +22400,7 @@ contains
       rad = 0.6*z
       do k = 1, min(nloc, MAXLOCUST)
          call screen_xy(lx(k), ly(k), z, i0, j0, xs, ys)
-         if (xs >= w + 4 .or. ys >= h + 4) cycle
+         if (xs < -nt*z - 4 .or. ys < -nt*z - 4 .or. xs >= w + nt*z + 4 .or. ys >= h + nt*z + 4) cycle
          if (lphase(k) > 0) then
             r = pal(1,Q_LOCG);  g = pal(2,Q_LOCG);  bl = pal(3,Q_LOCG);  al = 1
          else
@@ -21660,31 +22408,17 @@ contains
          end if
          dx = cos(lth(k));  dy = -sin(lth(k))
          do n = nt, 1, -1
-            px = int(xs - n*dx*0.9*z);  py = int(ys - n*dy*0.9*z)
-            call blend_px(buf, w, h, wrapx(px), wrapy(py), r, g, bl, al*0.5*(1 - real(n)/(nt + 1)), &
-                          .false.)
+            px = floor(xs - n*dx*0.9*z);  py = floor(ys - n*dy*0.9*z)
+            call blend_px(buf, w, h, px, py, r, g, bl, al*0.5*(1 - real(n)/(nt + 1)), .false.)
          end do
          do b = -1, 1
             do a = -1, 1
                if (a*a + b*b > rad*rad + 0.5) cycle
-               px = int(xs) + a;  py = int(ys) + b
-               call blend_px(buf, w, h, wrapx(px), wrapy(py), r, g, bl, al, .false.)
+               px = floor(xs) + a;  py = floor(ys) + b
+               call blend_px(buf, w, h, px, py, r, g, bl, al, .false.)
             end do
          end do
       end do
-   contains
-      integer function wrapx(p)
-         ! wrap a pixel column on the whole-torus view
-         integer, intent(in) :: p
-         wrapx = p
-         if (z == 1) wrapx = modulo(p, w)
-      end function wrapx
-      integer function wrapy(p)
-         ! wrap a pixel row on the whole-torus view
-         integer, intent(in) :: p
-         wrapy = p
-         if (z == 1) wrapy = modulo(p, h)
-      end function wrapy
    end subroutine draw_locusts
 
    subroutine draw_titans(z, i0, j0, buf, w, h)
@@ -21712,7 +22446,7 @@ contains
          end select
          do b = -m, m
             do a = -m, m
-               px = int(xs) + a;  py = int(ys) + b
+               px = floor(xs) + a;  py = floor(ys) + b
                ax = px + 0.5 - xs;  ay = py + 0.5 - ys
                d = sqrt(ax*ax + ay*ay)
                ring = max(0., 1 - abs(d - rr)/1.1) + 0.7*max(0., 1 - abs(d - 0.55*rr)/0.8)
@@ -21722,37 +22456,25 @@ contains
                if (titans(k)%state == 1) then
                   glow = 0.55*max(0., 1 - d/(2.4*rr))**2
                   r = pal(1,Q_GOLD);  g = pal(2,Q_GOLD);  bl = pal(3,Q_GOLD)
-                  if (glow > 0) call blend_px(buf, w, h, wpx(px), wpy(py), r, g, bl, glow, .true.)
-                  if (ring > 0) call blend_px(buf, w, h, wpx(px), wpy(py), pal(1,Q_GOLDHI), &
+                  if (glow > 0) call blend_px(buf, w, h, px, py, r, g, bl, glow, .true.)
+                  if (ring > 0) call blend_px(buf, w, h, px, py, pal(1,Q_GOLDHI), &
                                               pal(2,Q_GOLDHI), pal(3,Q_GOLDHI), ring, .false.)
                else if (ring > 0) then
-                  call blend_px(buf, w, h, wpx(px), wpy(py), pal(1,Q_SLEEP), pal(2,Q_SLEEP), &
+                  call blend_px(buf, w, h, px, py, pal(1,Q_SLEEP), pal(2,Q_SLEEP), &
                                 pal(3,Q_SLEEP), 0.85*ring, .false.)
                end if
             end do
          end do
       end do
-   contains
-      integer function wpx(p)
-         ! wrap a pixel column on the whole-torus view
-         integer, intent(in) :: p
-         wpx = p
-         if (z == 1) wpx = modulo(p, w)
-      end function wpx
-      integer function wpy(p)
-         ! wrap a pixel row on the whole-torus view
-         integer, intent(in) :: p
-         wpy = p
-         if (z == 1) wpy = modulo(p, h)
-      end function wpy
    end subroutine draw_titans
 
    ! ================================================================ the orbit view
 
    subroutine render_orbit(yaw, pitch, buf, w, h)
-      ! the doughnut planet in 3D (640 x 400): yaw turns the camera about the axis (radians,
-      ! 0 = the hero shot, the sun to the left), pitch tilts it from 28 degrees above the
-      ! ring plane (radians; |pitch| > 1.6 is taken to be degrees)
+      ! the world from space (640 x 400): a slab of the living map adrift among the stars,
+      ! the sea pouring off its edges.  yaw turns the camera about the world (radians, 0 =
+      ! the hero shot, from the south with the sun on the left), pitch tilts it from 28
+      ! degrees above the world's plane (radians; |pitch| > 1.6 is taken to be degrees)
       real(dp), intent(in) :: yaw, pitch
       character(len=:), allocatable, intent(inout) :: buf
       integer, intent(out) :: w, h
@@ -21760,9 +22482,7 @@ contains
       call ensure()
       p = pitch
       if (abs(p) > 1.6d0) p = p*DEG
-      el = max(-80*DEG, min(80*DEG, EL0 + p))
-      el = anint(el/(0.5d0*DEG))*0.5d0*DEG
-      if (.not. allocated(hpix) .or. abs(el - lut_el) > 1d-9) call build_orbit(el)
+      el = max(-70*DEG, min(84*DEG, EL0 + p))
       w = OW;  h = OH
       if (allocated(buf)) then
          if (len(buf) /= 4*w*h) deallocate(buf)
@@ -21771,8 +22491,7 @@ contains
       call check_static()
       call pass_living(-1, .false., .true.)
       call titan_lights()
-      call prep_sun()
-      call shade_orbit(yaw, buf)
+      call shade_orbit(yaw, el, buf)
    end subroutine render_orbit
 
    subroutine titan_lights()
@@ -21784,7 +22503,8 @@ contains
          do b = -2, 2
             do a = -2, 2
                x = 0.9/(1 + a*a + b*b)
-               ii = wrapi(titans(k)%x + a);  jj = wrapj(titans(k)%y + b)
+               ii = titans(k)%x + a;  jj = titans(k)%y + b
+               if (.not. onmap(ii, jj)) cycle
                ce(:,ii,jj) = ce(:,ii,jj) + x*pal(:,Q_GOLD)
                cc(:,ii,jj) = cc(:,ii,jj) + 0.5*x*(pal(:,Q_GOLDHI) - cc(:,ii,jj))
             end do
@@ -21792,72 +22512,14 @@ contains
       end do
    end subroutine titan_lights
 
-   subroutine build_orbit(el)
-      ! ray-cast the doughnut for every pixel (four rays each, for clean edges) from a
-      ! camera at elevation el: where each ray lands, how close each miss passes (the
-      ! atmosphere), and the sky behind with its stars and a milky way
-      real(dp), intent(in) :: el
-      real(dp), parameter :: OX(4) = [-0.25d0, 0.25d0, -0.25d0, 0.25d0]
-      real(dp), parameter :: OY(4) = [-0.25d0, -0.25d0, 0.25d0, 0.25d0]
-      real(dp) :: cam(3), fw(3), rt(3), up(3), rd(3), q(3), qm(3), u, v, dmin, dbest, th, bt
-      real(dp) :: rx, xb, yb, dl, band, vig
+   subroutine build_sky()
+      ! the sky behind the world: a dark field, a milky way across it, stars of several
+      ! colours, the brightest wearing a small cross
+      real(dp) :: xb, yb, dl, band, vig
       real(sp) :: sr, sg, sb, m, t, hsh
-      integer  :: px, py, p, k, nh, kk
-      logical  :: hit, first
+      integer  :: px, py, p, k, kk
       integer(i8) :: k1, k2, k3
-      if (.not. allocated(hpix)) then
-         allocate(hpix(OW*OH), hbt(2,OW*OH), hn(4,OW*OH), hv(5,OW*OH), halpix(OW*OH))
-         allocate(ohv(OW*OH), ohn(4,OW*OH))
-         allocate(character(len=4*OW*OH) :: obg)
-      end if
-      lut_el = el
-      cam = DCAM*[cos(el), 0d0, sin(el)]
-      fw = -cam/norm2(cam)
-      rt = [0d0, 1d0, 0d0]
-      up = [rt(2)*fw(3) - rt(3)*fw(2), rt(3)*fw(1) - rt(1)*fw(3), rt(1)*fw(2) - rt(2)*fw(1)]
-      nhit = 0;  nhal = 0;  ohv = 0
-      do py = 0, OH - 1
-         do px = 0, OW - 1
-            p = py*OW + px + 1
-            nh = 0;  first = .true.;  dbest = 1d9;  qm = 0
-            do k = 1, 4
-               u = (px + 0.5d0 + OX(k) - OW/2d0)/FPX
-               v = (OH/2d0 - py - 0.5d0 - OY(k))/FPX
-               rd = fw + u*rt + v*up
-               rd = rd/norm2(rd)
-               call march(cam, rd, hit, q, dmin)
-               if (hit) then
-                  nh = nh + 1
-                  if (first) then
-                     first = .false.
-                     nhit = nhit + 1
-                     rx = sqrt(q(1)**2 + q(2)**2) - RR
-                     th = atan2(q(3), rx);  bt = atan2(q(2), q(1))
-                     hpix(nhit) = p
-                     hbt(1,nhit) = real(modulo(bt/TWOPI, 1d0), sp)
-                     hbt(2,nhit) = real(modulo((th + PI)/TWOPI, 1d0), sp)
-                     hn(:,nhit) = real([cos(th), sin(th), cos(bt), sin(bt)], sp)
-                     hv(1:3,nhit) = real(-rd, sp)
-                     hv(4,nhit) = real(max(0d0, -(cos(th)*cos(bt)*rd(1) + cos(th)*sin(bt)*rd(2) &
-                                  + sin(th)*rd(3))), sp)
-                  end if
-               else if (dmin < dbest) then
-                  dbest = dmin;  qm = q
-               end if
-            end do
-            if (nh > 0) hv(5,nhit) = nh/4.
-            if (nh < 4 .and. dbest < HALO) then
-               rx = sqrt(qm(1)**2 + qm(2)**2) - RR
-               th = atan2(qm(3), rx);  bt = atan2(qm(2), qm(1))
-               ohv(p) = real((1 - dbest/HALO)**2.2d0, sp)
-               ohn(:,p) = real([cos(th), sin(th), cos(bt), sin(bt)], sp)
-               if (nh == 0) then
-                  nhal = nhal + 1;  halpix(nhal) = p
-               end if
-            end if
-         end do
-      end do
-      ! the sky: a dark field, a milky way across it, stars of several colours
+      if (.not. allocated(obg)) allocate(character(len=4*OW*OH) :: obg)
       k1 = mix32(9001_i8);  k2 = mix32(9002_i8);  k3 = mix32(9003_i8)
       do py = 0, OH - 1
          do px = 0, OW - 1
@@ -21886,7 +22548,6 @@ contains
             obg(4*p-3:4*p) = enc(sr, sg, sb)
          end do
       end do
-      ! a few bright stars wear a small cross
       do py = 1, OH - 2
          do px = 1, OW - 2
             if (hr2(px, py, k1) >= 0.0022 + 0.012) cycle
@@ -21901,150 +22562,349 @@ contains
             end do
          end do
       end do
-   end subroutine build_orbit
+      sky_ok = .true.
+   end subroutine build_sky
 
-   subroutine march(ro, rd, hit, q, dmin)
-      ! sphere-trace one ray against the doughnut (R = 2, r = 1); on a miss, dmin and q
-      ! are the closest approach to its surface
-      real(dp), intent(in)  :: ro(3), rd(3)
-      logical,  intent(out) :: hit
-      real(dp), intent(out) :: q(3), dmin
-      real(dp) :: b, c, disc, t, t1, d, p(3), rb
-      integer  :: n
-      hit = .false.;  dmin = 1d9;  q = 0
-      rb = RR + 1 + HALO + 0.05d0
-      b = dot_product(ro, rd);  c = dot_product(ro, ro) - rb*rb
-      disc = b*b - c
-      if (disc <= 0) return
-      t = max(0d0, -b - sqrt(disc));  t1 = -b + sqrt(disc)
-      do n = 1, 400
-         p = ro + t*rd
-         d = sqrt((sqrt(p(1)**2 + p(2)**2) - RR)**2 + p(3)**2) - 1
-         if (d < dmin) then
-            dmin = d;  q = p
+   subroutine slab_hit(ro, rd, hy, t, face)
+      ! where a ray enters the slab of the world, [-1,1] x [-hy,hy] x [-SLABT,0]: t (huge
+      ! on a miss) and the face it comes in by (1-4 the W E S N sides, 5 the bottom, 6 the top)
+      real(dp), intent(in)  :: ro(3), rd(3), hy
+      real(dp), intent(out) :: t
+      integer,  intent(out) :: face
+      real(dp) :: lo(3), hi(3), t0, t1, ta, tb
+      integer  :: k, fk
+      lo = [-1d0, -hy, -SLABT];  hi = [1d0, hy, 0d0]
+      t0 = -1d30;  t1 = 1d30;  face = 0;  t = 1d30
+      do k = 1, 3
+         if (abs(rd(k)) < 1d-12) then
+            if (ro(k) < lo(k) .or. ro(k) > hi(k)) return
+            cycle
          end if
-         if (d < 2d-4) then
-            hit = .true.;  q = p
-            return
+         ta = (lo(k) - ro(k))/rd(k);  tb = (hi(k) - ro(k))/rd(k)
+         fk = 2*k - 1
+         if (ta > tb) then
+            fk = 2*k;  t1 = min(t1, ta);  ta = tb
+         else
+            t1 = min(t1, tb)
          end if
-         t = t + d
-         if (t > t1) return
+         if (ta > t0) then
+            t0 = ta;  face = fk
+         end if
       end do
-   end subroutine march
+      if (t0 > t1 .or. t0 <= 0) then
+         face = 0
+         return
+      end if
+      t = t0
+   end subroutine slab_hit
 
-   subroutine shade_orbit(yaw, buf)
-      ! light every pixel of the orbit view: the sun and the ring's shadow, glinting seas,
-      ! the atmosphere at the limb, the lights of the night side, the stars behind
-      real(dp), intent(in) :: yaw
+   subroutine shade_orbit(yaw, el, buf)
+      ! a ray for every pixel at the slab of the world: its top is the living map, lit by
+      ! the sun (and by the map's own day and night, when the night is drawn), with foam at
+      ! its edge; its sides bare rock in strata; from every edge a curtain of water falls,
+      ! leaning outward, and thins to mist; spray hangs over the brink; the stars behind
+      real(dp), intent(in) :: yaw, el
       character(len=*), intent(inout) :: buf
-      real(sp), parameter :: AD(3) = [0.24, 0.48, 1.00], AN(3) = [0.012, 0.022, 0.06]
-      real(sp), parameter :: AT(3) = [1.00, 0.42, 0.15]
-      real(dp) :: psi, dec
-      real(sp) :: cp, sn, cd, sd, sx, sy, sz, rot, hof, fi, fj, fx, fy, w00, w10, w01, w11
-      real(sp) :: tr, tg, tb, er, eg, eb, c, dl, x, s, t, direct, day, nh, hx, hy, hz, sp_
-      real(sp) :: fr, atm, lit, twl, r, g, b, cov, hr, hg, hb, ct, st, cb, sbt
-      integer  :: k, p, i0, i1, j0, j1, kh, jn
-      psi = AZ0 + yaw
-      dec = tilt*sin(TWOPI*season_frac())
-      cp = real(cos(psi), sp);  sn = real(sin(psi), sp)
-      cd = real(cos(dec), sp);  sd = real(sin(dec), sp)
-      sx = cd*cp;  sy = -cd*sn;  sz = sd
-      rot = real(modulo((psi + sunlon)/TWOPI, 1d0), sp)
-      hof = real(modulo(psi/TWOPI, 1d0), sp)
+      real(dp), parameter :: OX(4) = [-0.25d0, 0.25d0, -0.25d0, 0.25d0]
+      real(dp), parameter :: OY(4) = [-0.25d0, -0.25d0, 0.25d0, 0.25d0]
+      real(dp), parameter :: SN(2,4) = reshape([-1d0, 0d0, 1d0, 0d0, 0d0, -1d0, 0d0, 1d0], [2,4])
+      real(dp) :: cam(3), fw(3), rt(3), up(3), rd(3), rs(3), sun(3), az, hy, fl, u, v
+      real(dp) :: t, ts, den, q(3), ev(4), dd, e, hl, tsh(4)
+      real(sp) :: r, g, b, cr, cg, cb, a, x, cov, fi, fj, fx, fy, w00, w10, w01, w11
+      real(sp) :: wr, wg, wb, dsh(4), esh(4), mist, day, c, dl, tsc
+      integer  :: px, py, p, k, face, fs, nh, i0, i1, j0, j1, ic, jc, ksh(4), nsh, m, kk
+      integer  :: xa, xb, ya, yb
+      integer  :: fc(-1:OW, -1:OH)                   ! what the middle ray of each pixel strikes
+      hy = real(NY, dp)/NX
+      fl = FLARE/MISTH
+      az = AZC + yaw
+      cam = DCAM*[cos(el)*cos(az), cos(el)*sin(az), sin(el)]
+      fw = [0d0, 0d0, -0.18d0] - cam;  fw = fw/norm2(fw)
+      rt = [fw(2), -fw(1), 0d0]                      ! fw x up, up = z
+      if (norm2(rt) < 1d-9) rt = [1d0, 0d0, 0d0]
+      rt = rt/norm2(rt)
+      up = [rt(2)*fw(3) - rt(3)*fw(2), rt(3)*fw(1) - rt(1)*fw(3), rt(1)*fw(2) - rt(2)*fw(1)]
+      sun = [cos(SUNEL)*cos(AZC + SUNAZ), cos(SUNEL)*sin(AZC + SUNAZ), sin(SUNEL)]
+      tsc = real(mod(tick, 4096_i8), sp)
+      ev = [1d0, 1d0, hy, hy]                        ! how far each side lies from the middle
+      if (.not. sky_ok) call build_sky()
       buf(1:4*OW*OH) = obg
-      ! the atmosphere seen against the sky
-      do k = 1, nhal
-         p = halpix(k)
-         call halo_rgb(p, hr, hg, hb)
-         r = gdec(iachar(obg(4*p-3:4*p-3))) + hr
-         g = gdec(iachar(obg(4*p-2:4*p-2))) + hg
-         b = gdec(iachar(obg(4*p-1:4*p-1))) + hb
-         buf(4*p-3:4*p) = enc(r, g, b)
+      ! only the pixels about the world and its falls need a ray: their box on the screen
+      call screen_box(xa, xb, ya, yb)
+      fc = 0
+      do py = ya, yb
+         do px = xa, xb
+            u = (px + 0.5d0 - OW/2d0)/FPX
+            v = (OH/2d0 - py - 0.5d0)/FPX
+            rd = fw + u*rt + v*up;  rd = rd/norm2(rd)
+            call slab_hit(cam, rd, hy, t, face)
+            fc(px,py) = face
+         end do
       end do
-      ! the planet
-      do k = 1, nhit
-         p = hpix(k)
-         fi = (hbt(1,k) + rot)*NX + 0.5;  fj = hbt(2,k)*NY + 0.5
-         x = real(floor(fi), sp);  fx = fi - x;  i0 = wrapi(int(x));  i1 = wrapi(int(x) + 1)
-         x = real(floor(fj), sp);  fy = fj - x;  j0 = wrapj(int(x));  j1 = wrapj(int(x) + 1)
-         w00 = (1 - fx)*(1 - fy);  w10 = fx*(1 - fy);  w01 = (1 - fx)*fy;  w11 = fx*fy
-         tr = w00*cc(1,i0,j0) + w10*cc(1,i1,j0) + w01*cc(1,i0,j1) + w11*cc(1,i1,j1)
-         tg = w00*cc(2,i0,j0) + w10*cc(2,i1,j0) + w01*cc(2,i0,j1) + w11*cc(2,i1,j1)
-         tb = w00*cc(3,i0,j0) + w10*cc(3,i1,j0) + w01*cc(3,i0,j1) + w11*cc(3,i1,j1)
-         er = w00*ce(1,i0,j0) + w10*ce(1,i1,j0) + w01*ce(1,i0,j1) + w11*ce(1,i1,j1)
-         eg = w00*ce(2,i0,j0) + w10*ce(2,i1,j0) + w01*ce(2,i0,j1) + w11*ce(2,i1,j1)
-         eb = w00*ce(3,i0,j0) + w10*ce(3,i1,j0) + w01*ce(3,i0,j1) + w11*ce(3,i1,j1)
-         ct = hn(1,k);  st = hn(2,k);  cb = hn(3,k);  sbt = hn(4,k)
-         c = ct*cd*(cb*cp - sbt*sn) + st*sd
-         ! the shadow of the ring, from the sunlight table at this hour
-         x = modulo(hbt(1,k) + hof, 1.)*NHOUR
-         kh = min(NHOUR - 1, int(x));  t = x - kh
-         jn = wrapj(nint(fj))
-         dl = (1 - t)*dlt(kh+1,jn) + t*dlt(kh+2,jn)
-         s = 1
-         if (c > 0) then
-            s = min(1., dl/max(c, 0.04))
-            t = min(1., c/0.08)
-            s = s*t + 1 - t
-         end if
-         direct = max(0., c)*s
-         day = smooth(-0.05, 0.16, c)*s
-         x = 0.010 + 1.30*direct
-         r = tr*x;  g = tg*x;  b = tb*x
-         twl = max(0., 1 - abs(c - 0.01)/0.11)*s
-         r = r + tr*0.30*twl*AT(1);  g = g + tg*0.30*twl*AT(2);  b = b + tb*0.30*twl*AT(3)
-         x = 1.5*(1 - day)
-         r = r + x*er;  g = g + x*eg;  b = b + x*eb
-         ! the sun's glint on open water
-         if (land(wrapi(nint(fi)),jn) == 0 .and. ice(wrapi(nint(fi)),jn) < 0 .and. direct > 0) then
-            hx = sx + hv(1,k);  hy = sy + hv(2,k);  hz = sz + hv(3,k)
-            nh = (ct*cb*hx + ct*sbt*hy + st*hz)/sqrt(hx*hx + hy*hy + hz*hz)
-            if (nh > 0.9) then
-               sp_ = nh*nh*nh;  sp_ = sp_*sp_;  sp_ = sp_*sp_;  sp_ = sp_*sp_;  sp_ = sp_*sp_
-               sp_ = 0.85*sp_*sqrt(direct)
-               r = r + sp_;  g = g + 0.93*sp_;  b = b + 0.80*sp_
+      do py = ya, yb
+         do px = xa, xb
+            p = py*OW + px + 1
+            r = gdec(iachar(obg(4*p-3:4*p-3)))
+            g = gdec(iachar(obg(4*p-2:4*p-2)))
+            b = gdec(iachar(obg(4*p-1:4*p-1)))
+            u = (px + 0.5d0 - OW/2d0)/FPX
+            v = (OH/2d0 - py - 0.5d0)/FPX
+            rd = fw + u*rt + v*up;  rd = rd/norm2(rd)
+            ! ---- the slab: inside its outline the middle ray; on the outline four rays, and
+            ! the first that strikes it is shaded
+            nh = 0;  fs = 0;  ts = 1d30;  rs = 0
+            face = fc(px,py)
+            if (all([fc(px-1,py), fc(px+1,py), fc(px,py-1), fc(px,py+1)] == face)) then
+               if (face > 0) then
+                  call slab_hit(cam, rd, hy, ts, fs)
+                  nh = 4;  rs = rd
+               end if
+            else
+               do k = 1, 4
+                  u = (px + 0.5d0 + OX(k) - OW/2d0)/FPX
+                  v = (OH/2d0 - py - 0.5d0 - OY(k))/FPX
+                  rs = fw + u*rt + v*up;  rs = rs/norm2(rs)
+                  call slab_hit(cam, rs, hy, t, face)
+                  if (face > 0) then
+                     nh = nh + 1
+                     if (fs == 0) then
+                        fs = face;  ts = t;  q = rs
+                     end if
+                  end if
+               end do
+               rs = q
             end if
-         end if
-         ! the atmosphere, thickest at the limb
-         fr = 1 - hv(4,k);  fr = fr*fr*fr
-         lit = smooth(-0.25, 0.45, c)
-         atm = fr*0.75
-         r = r + atm*(AD(1)*lit + AN(1)) + fr*0.35*twl*AT(1)
-         g = g + atm*(AD(2)*lit + AN(2)) + fr*0.35*twl*AT(2)
-         b = b + atm*(AD(3)*lit + AN(3)) + fr*0.35*twl*AT(3)
-         cov = hv(5,k)
-         if (cov < 1) then
-            call halo_rgb(p, hr, hg, hb)
-            r = cov*r + (1 - cov)*(gdec(iachar(obg(4*p-3:4*p-3))) + hr)
-            g = cov*g + (1 - cov)*(gdec(iachar(obg(4*p-2:4*p-2))) + hg)
-            b = cov*b + (1 - cov)*(gdec(iachar(obg(4*p-1:4*p-1))) + hb)
-         end if
-         buf(4*p-3:4*p) = enc(r, g, b)
+            ! ---- the falls, along the middle ray: where it meets each curtain
+            nsh = 0
+            do k = 1, 4
+               den = SN(1,k)*rd(1) + SN(2,k)*rd(2) + fl*rd(3)
+               if (abs(den) < 1d-12) cycle
+               t = (ev(k) - SN(1,k)*cam(1) - SN(2,k)*cam(2) - fl*cam(3))/den
+               if (t <= 0) cycle
+               q = cam + t*rd
+               dd = -q(3)
+               if (dd < 0 .or. dd > MISTH) cycle
+               if (k <= 2) then
+                  e = q(2);  hl = hy + fl*dd
+               else
+                  e = q(1);  hl = 1 + fl*dd
+               end if
+               if (abs(e) > hl) cycle
+               nsh = nsh + 1
+               tsh(nsh) = t;  ksh(nsh) = k
+               dsh(nsh) = real(dd/MISTH, sp);  esh(nsh) = real((e + hl)/(2*hl), sp)
+            end do
+            ! the curtains behind the slab, farthest first
+            do m = 1, nsh
+               kk = maxloc(tsh(1:nsh), 1)
+               if (tsh(kk) < 0) exit
+               if (tsh(kk) > ts .or. nh == 0) call curtain(kk, r, g, b)
+               if (tsh(kk) <= ts .and. nh > 0) exit
+               tsh(kk) = -1
+            end do
+            ! the slab, over what lies behind it as far as it covers the pixel
+            if (nh > 0) then
+               call slab_rgb(rs, ts, fs, cr, cg, cb)
+               cov = nh/4.
+               r = cov*cr + (1 - cov)*r;  g = cov*cg + (1 - cov)*g;  b = cov*cb + (1 - cov)*b
+               ! the curtains in front of it, farthest first
+               do m = 1, nsh
+                  kk = maxloc(tsh(1:nsh), 1)
+                  if (tsh(kk) < 0) exit
+                  call curtain(kk, r, g, b)
+                  tsh(kk) = -1
+               end do
+            end if
+            ! ---- spray over the brink: mist about the four edges of the top
+            mist = 0
+            do k = 1, 4
+               call brink(k, rd, x)
+               mist = mist + x
+            end do
+            if (mist > 0.002) then
+               x = min(1.2, mist)*0.45
+               r = r + x*pal(1,Q_SPRAY);  g = g + x*pal(2,Q_SPRAY);  b = b + x*pal(3,Q_SPRAY)
+            end if
+            buf(4*p-3:4*p) = enc(r, g, b)
+         end do
       end do
    contains
-      subroutine halo_rgb(p_, r_, g_, b_)
-         ! light of the atmosphere seen just past the limb at pixel p_
-         integer,  intent(in)  :: p_
+      subroutine screen_box(xa_, xb_, ya_, yb_)
+         ! the box on the screen that holds the world, its falls and the mist about them
+         ! (the whole screen if any of it lies behind the camera)
+         integer, intent(out) :: xa_, xb_, ya_, yb_
+         real(dp) :: c_(3), d_(3), zc, sx_, sy_, ax, ay, az_
+         integer  :: n_
+         xa_ = OW;  xb_ = -1;  ya_ = OH;  yb_ = -1
+         do n_ = 0, 15
+            ax = 1 + 0.25d0;  ay = hy + 0.25d0;  az_ = 0.25d0
+            if (n_ >= 8) then
+               ax = 1 + FLARE + 0.1d0;  ay = hy + FLARE + 0.1d0;  az_ = -MISTH - 0.05d0
+            end if
+            c_ = [merge(-ax, ax, btest(n_, 0)), merge(-ay, ay, btest(n_, 1)), &
+                  merge(az_, -SLABT - 0.25d0*merge(0, 1, n_ >= 8), btest(n_, 2))]
+            d_ = c_ - cam
+            zc = dot_product(d_, fw)
+            if (zc < 0.05d0) then
+               xa_ = 0;  xb_ = OW - 1;  ya_ = 0;  yb_ = OH - 1
+               return
+            end if
+            sx_ = OW/2d0 + FPX*dot_product(d_, rt)/zc
+            sy_ = OH/2d0 - FPX*dot_product(d_, up)/zc
+            xa_ = min(xa_, floor(sx_) - 2);  xb_ = max(xb_, ceiling(sx_) + 2)
+            ya_ = min(ya_, floor(sy_) - 2);  yb_ = max(yb_, ceiling(sy_) + 2)
+         end do
+         xa_ = max(0, xa_);  xb_ = min(OW - 1, xb_);  ya_ = max(0, ya_);  yb_ = min(OH - 1, yb_)
+      end subroutine screen_box
+
+      subroutine slab_rgb(rd_, t_, face_, r_, g_, b_)
+         ! the colour of the slab where ray rd_ enters it by face face_
+         real(dp), intent(in)  :: rd_(3), t_
+         integer,  intent(in)  :: face_
          real(sp), intent(out) :: r_, g_, b_
-         real(sp) :: c_, v_, l_, t_
-         v_ = ohv(p_)
-         if (v_ <= 0) then
-            r_ = 0;  g_ = 0;  b_ = 0
+         real(dp) :: q_(3), nrm(3), hv(3)
+         real(sp) :: de, lam, s_, k_, z_
+         integer  :: ia
+         q_ = cam + t_*rd_
+         if (face_ == 6) then
+            ! the top: the living map
+            fi = real((q_(1) + 1)*NX/2 + 0.5d0, sp);  fj = real((q_(2) + hy)/(2*hy)*NY + 0.5d0, sp)
+            de = min(fi - 0.5, NX + 0.5 - fi, fj - 0.5, NY + 0.5 - fj)
+            fi = max(1., min(real(NX, sp), fi));  fj = max(1., min(real(NY, sp), fj))
+            i0 = min(NX - 1, int(fi));  j0 = min(NY - 1, int(fj));  i0 = max(1, i0);  j0 = max(1, j0)
+            i1 = min(NX, i0 + 1);  j1 = min(NY, j0 + 1)
+            fx = fi - i0;  fy = fj - j0
+            w00 = (1 - fx)*(1 - fy);  w10 = fx*(1 - fy);  w01 = (1 - fx)*fy;  w11 = fx*fy
+            r_ = w00*cc(1,i0,j0) + w10*cc(1,i1,j0) + w01*cc(1,i0,j1) + w11*cc(1,i1,j1)
+            g_ = w00*cc(2,i0,j0) + w10*cc(2,i1,j0) + w01*cc(2,i0,j1) + w11*cc(2,i1,j1)
+            b_ = w00*cc(3,i0,j0) + w10*cc(3,i1,j0) + w01*cc(3,i0,j1) + w11*cc(3,i1,j1)
+            wr = w00*ce(1,i0,j0) + w10*ce(1,i1,j0) + w01*ce(1,i0,j1) + w11*ce(1,i1,j1)
+            wg = w00*ce(2,i0,j0) + w10*ce(2,i1,j0) + w01*ce(2,i0,j1) + w11*ce(2,i1,j1)
+            wb = w00*ce(3,i0,j0) + w10*ce(3,i1,j0) + w01*ce(3,i0,j1) + w11*ce(3,i1,j1)
+            ic = nint(fi);  jc = nint(fj)
+            day = 1
+            if (nlv < 0.999) then
+               c = ra(jc)*chh(ic) + rb(jc)
+               dl = dlt(hk0(ic),jc)*(1 - hwt(ic)) + dlt(hk1(ic),jc)*hwt(ic)
+               day = daylight(c, dl)
+            end if
+            lam = real(0.08d0 + 1.25d0*sun(3), sp)
+            x = nlv + (1 - nlv)*day
+            r_ = r_*lam*x + 1.5*(1 - x)*wr;  g_ = g_*lam*x + 1.5*(1 - x)*wg
+            b_ = b_*lam*x + 1.5*(1 - x)*wb
+            ! the sun's sheen on open water
+            if (land(ic,jc) == 0 .and. ice(ic,jc) < 0) then
+               hv = sun - rd_;  hv = hv/norm2(hv)
+               s_ = real(hv(3), sp)**24
+               s_ = 0.10*s_ + 0.6*s_**12
+               r_ = r_ + s_*x;  g_ = g_ + 0.94*s_*x;  b_ = b_ + 0.82*s_*x
+            end if
+            ! foam on the brink
+            if (de < 1.2) then
+               a = 0.85*(1 - de/1.2)
+               r_ = r_ + a*(pal(1,Q_SPRAY)*lam - r_);  g_ = g_ + a*(pal(2,Q_SPRAY)*lam - g_)
+               b_ = b_ + a*(pal(3,Q_SPRAY)*lam - b_)
+            end if
             return
          end if
-         c_ = ohn(1,p_)*cd*(ohn(3,p_)*cp - ohn(4,p_)*sn) + ohn(2,p_)*sd
-         l_ = smooth(-0.30, 0.50, c_)
-         t_ = max(0., 1 - abs(c_ + 0.04)/0.16)
-         r_ = v_*(0.9*AD(1)*l_ + AN(1) + 0.45*t_*AT(1))
-         g_ = v_*(0.9*AD(2)*l_ + AN(2) + 0.45*t_*AT(2))
-         b_ = v_*(0.9*AD(3)*l_ + AN(3) + 0.45*t_*AT(3))
-      end subroutine halo_rgb
+         ! the sides and the bottom: rock in strata, darker as it goes down
+         if (face_ == 5) then
+            nrm = [0d0, 0d0, -1d0];  z_ = 1
+            ia = iand(int(40*(q_(1) + q_(2)) + 64), 63)
+            k_ = nzs(ia, iand(int(30*(q_(1) - q_(2)) + 64), 63))
+         else
+            nrm = 0;  nrm(1:2) = SN(:,face_)
+            z_ = real(-q_(3)/SLABT, sp)
+            if (face_ <= 2) then
+               e = q_(2)
+            else
+               e = q_(1)
+            end if
+            ia = iand(int((e + 1)*NX/8), 63)
+            k_ = nzs(ia, iand(int(z_*22 + 3*nzs(iand(ia + 21, 63), 7)), 63))
+         end if
+         r_ = pal(1,Q_STONE)*(0.55 + 0.45*k_);  g_ = pal(2,Q_STONE)*(0.50 + 0.42*k_)
+         b_ = pal(3,Q_STONE)*(0.46 + 0.38*k_)
+         s_ = 1 - 0.6*z_
+         lam = real(max(0d0, dot_product(nrm, sun)), sp)
+         x = (0.035 + 1.05*lam)*s_
+         r_ = r_*x;  g_ = g_*x;  b_ = b_*x
+         if (face_ /= 5 .and. z_ < 0.12) then         ! the sea at the lip, about to go over
+            a = 0.7*(1 - z_/0.12)
+            r_ = r_ + a*(pal(1,Q_SPRAY)*0.6 - r_);  g_ = g_ + a*(pal(2,Q_SPRAY)*0.65 - g_)
+            b_ = b_ + a*(pal(3,Q_SPRAY)*0.7 - b_)
+         end if
+      end subroutine slab_rgb
+
+      subroutine curtain(n_, r_, g_, b_)
+         ! one falling curtain (n_-th hit of the middle ray) laid over the colour behind it
+         integer,  intent(in)    :: n_
+         real(sp), intent(inout) :: r_, g_, b_
+         real(sp) :: f_, s1, s2, s3, al, lw, cw, ff
+         integer  :: k_, ia, ie, je
+         k_ = ksh(n_);  f_ = dsh(n_)
+         ! the edge cell it pours from: open sea runs, frozen sea hangs still and short
+         if (k_ <= 2) then
+            je = max(1, min(NY, 1 + int(esh(n_)*NY)));  ie = merge(1, NX, k_ == 1)
+         else
+            ie = max(1, min(NX, 1 + int(esh(n_)*NX)));  je = merge(1, NY, k_ == 3)
+         end if
+         ff = 1
+         if (ice(ie,je) > 0) then
+            ff = 0.55
+            if (f_ > 0.35) return
+         end if
+         ia = iand(int(esh(n_)*real(merge(NY, NX, k_ <= 2), sp)*0.8), 63)
+         ! streaks, fine across the curtain and long down it, running down; droplets; and
+         ! below, soft clouds of mist that thin away to nothing
+         s1 = nzs(ia, iand(int(f_*7 - 0.5*tsc*ff), 63))
+         s2 = nzw(iand(ia*5 + int(f_*61), 63), iand(int(f_*90 - 1.7*tsc*ff), 63))
+         s3 = nzs(iand(ia/4 + 17*k_, 63), iand(int(f_*3 - 0.08*tsc*ff), 63))
+         al = 0.9*(1 - f_)**1.3*smooth(0.30, 0.78, s1) + 0.10*(1 - f_)**2
+         if (s2 > 0.93) al = al + 0.4*f_*(1 - f_)
+         al = al + 0.42*sin(3.1416*f_)**1.2*smooth(0.15, 0.85, s3)*sqrt(1 - f_)
+         al = min(0.9, al)*ff
+         ! water lit by the sun, and glowing where the sun shines through it
+         cw = real((SN(1,k_)*sun(1) + SN(2,k_)*sun(2) + fl*sun(3))/sqrt(1 + fl*fl), sp)
+         lw = 0.30 + 0.75*max(0., cw) + 0.30*max(0., -cw)
+         r_ = r_ + al*(lw*(pal(1,Q_SPRAY) - 0.25*(1 - f_)) - r_)
+         g_ = g_ + al*(lw*(pal(2,Q_SPRAY) - 0.12*(1 - f_)) - g_)
+         b_ = b_ + al*(lw*pal(3,Q_SPRAY) - b_)
+      end subroutine curtain
+
+      subroutine brink(k_, rd_, m_)
+         ! mist about edge k_ of the top: how close the ray passes to it, unless it passes
+         ! there behind the slab
+         integer,  intent(in)  :: k_
+         real(dp), intent(in)  :: rd_(3)
+         real(sp), intent(out) :: m_
+         real(dp) :: a1, a2, o1, o2, d1, d2, tt, dx, along, half, dn
+         m_ = 0
+         ! the edge runs along y (W, E) or x (S, N), at the other coordinate +-ev, z = 0
+         if (k_ <= 2) then
+            a1 = cam(1) - SN(1,k_)*ev(k_);  d1 = rd_(1);  o2 = cam(2);  d2 = rd_(2);  half = hy
+         else
+            a1 = cam(2) - SN(2,k_)*ev(k_);  d1 = rd_(2);  o2 = cam(1);  d2 = rd_(1);  half = 1
+         end if
+         a2 = cam(3)
+         dn = d1*d1 + rd_(3)*rd_(3)
+         if (dn < 1d-12) return
+         tt = -(a1*d1 + a2*rd_(3))/dn
+         if (tt <= 0) return
+         if (nh > 0 .and. tt > ts + 0.06d0) return
+         o1 = a1 + tt*d1;  dx = a2 + tt*rd_(3)
+         along = abs(o2 + tt*d2) - half
+         dx = o1*o1 + dx*dx
+         if (along > 0) dx = dx + along*along
+         if (dx > 0.05d0) return                      ! far from the brink: nothing
+         m_ = real(exp(-dx/(0.028d0**2))*0.5d0 + exp(-dx/(0.07d0**2))*0.12d0, sp)
+      end subroutine brink
    end subroutine shade_orbit
 
    ! ================================================================ snapshots
 
    subroutine render_snapshot(fname, view)
-      ! a PPM picture of the whole map in one view (view < 0: the planet from orbit)
+      ! a PPM picture of the whole map in one view (view < 0: the world from orbit)
       character(*), intent(in) :: fname
       integer,      intent(in) :: view
       character(len=:), allocatable :: b
@@ -22633,6 +23493,10 @@ contains
       call sb_put(sb, '  box-shadow: 0 0 0 1px rgba(216,166,87,.48), 0 0 0 4px rgba(9,12,21,.96),'//NL)
       call sb_put(sb, '              0 0 0 5px rgba(216,166,87,.2), 0 24px 70px rgba(0,0,0,.6);'//NL)
       call sb_put(sb, '}'//NL)
+      call sb_put(sb, '#plate.void { cursor: default; }'//NL)
+      call sb_put(sb, '#plate.hand.void { cursor: not-allowed; }'//NL)
+      call sb_put(sb, '#plate.void.dragging { cursor: grabbing; }'//NL)
+      call sb_put(sb, '#edge { pointer-events: none; filter: blur(.3px); }'//NL)
       call sb_put(sb, '#plate canvas { position: absolute; left: 0; top: 0; display: block; }'//NL)
       call sb_put(sb, '#map { image-rendering: auto; }'//NL)
       call sb_put(sb, '#plate.hand { cursor: none; }'//NL)
@@ -23570,8 +24434,8 @@ contains
       call sb_put(sb, '/* ===== the banner of a great event */'//NL)
       call sb_put(sb, '#banner { position: absolute; z-index: 5; width: max-content; min-width: 320px; opacity: 0;')
       call sb_put(sb, ' pointer-events: none;'//NL)
-      call sb_put(sb, '          transform: translate(-50%, -10px); transition: opacity .8s ease, transform .8s ea')
-      call sb_put(sb, 'se; }'//NL)
+      call sb_put(sb, '          transform: translate(-50%, -10px); transition: opacity .45s ease, transform .45s ')
+      call sb_put(sb, 'ease; }'//NL)
       call sb_put(sb, '#banner.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; cursor: point')
       call sb_put(sb, 'er; }'//NL)
       call sb_put(sb, '#banner.now { transition: none; }'//NL)
@@ -23615,6 +24479,130 @@ contains
       call sb_put(sb, '.bn.ochre .bt b { color: #f2c077; }'//NL)
       call sb_put(sb, '.bn.green .bt b { color: #bcdb9c; }'//NL)
       call sb_put(sb, '.bn.violet .bt b { color: #d6c1f7; }'//NL)
+      call sb_put(sb, '.bn.ep { padding: 12px 32px 13px 16px; }'//NL)
+      call sb_put(sb, '.bn.ep .bt b { font-size: 17px; letter-spacing: .45em; }'//NL)
+      call sb_put(sb, '.bn.ep .bx2 { font-size: 14.5px; }'//NL)
+      call sb_put(sb, NL)
+      call sb_put(sb, '/* ===== the headlines in the lower corner of the map (newest on top), the digest of a busy')
+      call sb_put(sb, ' age */'//NL)
+      call sb_put(sb, '#news { position: absolute; left: 0; bottom: 0; z-index: 5; display: flex; flex-direction: ')
+      call sb_put(sb, 'column; gap: 5px;'//NL)
+      call sb_put(sb, '        width: 300px; pointer-events: none; }'//NL)
+      call sb_put(sb, '.nw { pointer-events: auto; cursor: pointer; display: grid; grid-template-columns: auto min')
+      call sb_put(sb, 'max(0, 1fr);'//NL)
+      call sb_put(sb, '      column-gap: 8px; align-items: center; padding: 5px 9px 5px 6px; border-radius: 3px;'//NL)
+      call sb_put(sb, '      border: 1px solid rgba(216,166,87,.38); border-left: 3px solid var(--gold);'//NL)
+      call sb_put(sb, '      background: linear-gradient(180deg, rgba(24,30,47,.93), rgba(10,13,22,.93));'//NL)
+      call sb_put(sb, '      box-shadow: 0 6px 18px rgba(0,0,0,.5); animation: nwin .35s ease-out;'//NL)
+      call sb_put(sb, '      transition: opacity .3s ease, transform .3s ease; }'//NL)
+      call sb_put(sb, '.nw:hover { background: linear-gradient(180deg, rgba(36,43,64,.96), rgba(15,18,30,.96)); }'//NL)
+      call sb_put(sb, '.nw.out { opacity: 0; transform: translateX(-14px); pointer-events: none; }'//NL)
+      call sb_put(sb, '@keyframes nwin { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; trans')
+      call sb_put(sb, 'form: none; } }'//NL)
+      call sb_put(sb, '.nw .bic { gap: 2px; }'//NL)
+      call sb_put(sb, '.nw .bic .arms { width: 20px; height: 24px; }'//NL)
+      call sb_put(sb, '.nw .bic .bx { font-size: 11px; }'//NL)
+      call sb_put(sb, '.nw .bic .bx svg.i { width: 12px; height: 12px; }'//NL)
+      call sb_put(sb, '.nw .bic .bg { width: 24px; height: 24px; font-size: 13px; }'//NL)
+      call sb_put(sb, '.nw .bic .flame { width: 24px; height: 24px; }'//NL)
+      call sb_put(sb, '.nwb { min-width: 0; }'//NL)
+      call sb_put(sb, '.nwt { display: flex; align-items: baseline; gap: 7px; }'//NL)
+      call sb_put(sb, '.nwt b { font-weight: 600; font-size: 12px; letter-spacing: .2em; font-variant-caps: all-sm')
+      call sb_put(sb, 'all-caps;'//NL)
+      call sb_put(sb, '         color: var(--gold2); white-space: nowrap; overflow: hidden; text-overflow: ellipsi')
+      call sb_put(sb, 's; }'//NL)
+      call sb_put(sb, '.nwt em { font: normal 9.5px var(--mono); color: #160f07; background: var(--gold2); border-')
+      call sb_put(sb, 'radius: 7px; padding: 0 4px; }'//NL)
+      call sb_put(sb, '.nwt span { margin-left: auto; font: 10px var(--mono); color: var(--parch3); white-space: n')
+      call sb_put(sb, 'owrap; }'//NL)
+      call sb_put(sb, '.nwx { font-size: 12px; line-height: 1.35; font-style: italic; color: #e6dbc2; white-space:')
+      call sb_put(sb, ' nowrap;'//NL)
+      call sb_put(sb, '       overflow: hidden; text-overflow: ellipsis; }'//NL)
+      call sb_put(sb, '.nw.red { border-left-color: #ED331F; } .nw.red .nwt b { color: #f5a890; }'//NL)
+      call sb_put(sb, '.nw.ochre { border-left-color: #eaa650; } .nw.ochre .nwt b { color: #f2c077; }'//NL)
+      call sb_put(sb, '.nw.green { border-left-color: #8cc474; } .nw.green .nwt b { color: #bcdb9c; }'//NL)
+      call sb_put(sb, '.nw.violet { border-left-color: #b49be8; } .nw.violet .nwt b { color: #d6c1f7; }'//NL)
+      call sb_put(sb, '.nwd { pointer-events: auto; cursor: pointer; align-self: flex-start; max-width: 100%; padd')
+      call sb_put(sb, 'ing: 3px 9px 4px;'//NL)
+      call sb_put(sb, '       border-radius: 3px; border: 1px solid var(--line3); background: rgba(8,11,19,.86); f')
+      call sb_put(sb, 'ont-size: 11.5px;'//NL)
+      call sb_put(sb, '       font-style: italic; color: var(--parch2); transition: opacity .4s; }'//NL)
+      call sb_put(sb, '.nwd b { font: normal 11px var(--mono); color: var(--gold2); }'//NL)
+      call sb_put(sb, '.nwd.off { opacity: 0; pointer-events: none; }'//NL)
+      call sb_put(sb, 'body.still .nw, body.still .nwd { animation: none; transition: none; }'//NL)
+      call sb_put(sb, '.kk.kb { gap: 2px; }'//NL)
+      call sb_put(sb, '.kk.kb span { margin-left: 3px; }'//NL)
+      call sb_put(sb, '#legend2.tight .kk { font-size: 0; gap: 0; }'//NL)
+      call sb_put(sb, '#legend2.tight .kk.kb, #legend2.narrow .kk.kb { gap: 2px; }'//NL)
+      call sb_put(sb, '#legend2.narrow .ot span { display: none; }'//NL)
+      call sb_put(sb, '#legend2.narrow .ot { padding: 1px 6px 2px; }'//NL)
+      call sb_put(sb, NL)
+      call sb_put(sb, '/* ===== the Realms tab at forty realms: the wars, the chosen realm''s bonds, a line for ea')
+      call sb_put(sb, 'ch realm */'//NL)
+      call sb_put(sb, '.wrow { margin: 3px 0 6px; padding: 6px 8px 7px 9px; border-radius: 4px; cursor: pointer;'//NL)
+      call sb_put(sb, '        border-left: 2px solid rgba(237,51,31,.6); background: rgba(237,51,31,.045); }'//NL)
+      call sb_put(sb, '.wrow:hover { background: rgba(237,51,31,.1); }'//NL)
+      call sb_put(sb, '.wrow.holy { border-left-color: #f0cf8e; }'//NL)
+      call sb_put(sb, '.wr1 { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--parch); ')
+      call sb_put(sb, 'min-width: 0; }'//NL)
+      call sb_put(sb, '.wr1 .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }'//NL)
+      call sb_put(sb, '.wr1 .vs { font-family: var(--sym); color: #f07c60; flex: none; }'//NL)
+      call sb_put(sb, '.wr1 .w { margin-left: auto; font: 10.5px var(--mono); color: var(--parch4); white-space: n')
+      call sb_put(sb, 'owrap; }'//NL)
+      call sb_put(sb, '.wr2 { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 11.5px; fo')
+      call sb_put(sb, 'nt-style: italic;'//NL)
+      call sb_put(sb, '       color: var(--parch2); }'//NL)
+      call sb_put(sb, '.wr3 { margin-top: 3px; font: 10.5px var(--mono); color: var(--parch3); white-space: nowrap')
+      call sb_put(sb, '; overflow: hidden;'//NL)
+      call sb_put(sb, '       text-overflow: ellipsis; }'//NL)
+      call sb_put(sb, '.wr3.fr { font: italic 11.5px var(--serif); }'//NL)
+      call sb_put(sb, '.tugb { display: inline-flex; align-items: center; gap: 2px; flex: none; padding: 2px 3px; ')
+      call sb_put(sb, 'border-radius: 3px;'//NL)
+      call sb_put(sb, '        background: rgba(0,0,0,.4); }'//NL)
+      call sb_put(sb, '.tugb i { width: 7px; height: 6px; border-radius: 1px; background: rgba(233,220,192,.14); }'//NL)
+      call sb_put(sb, '.tugb b { width: 1px; height: 10px; margin: 0 2px; background: var(--gold); }'//NL)
+      call sb_put(sb, '.tugb.sp { width: 46px; gap: 0; }'//NL)
+      call sb_put(sb, '.tugb.sp i { height: 5px; border-radius: 0; }'//NL)
+      call sb_put(sb, '.rrow, .rrl { display: grid; align-items: center; gap: 7px; padding: 3px 6px; border-radius')
+      call sb_put(sb, ': 3px; cursor: pointer;'//NL)
+      call sb_put(sb, '              font-size: 12.5px; }'//NL)
+      call sb_put(sb, '.rrow { grid-template-columns: 15px 11px minmax(0, 1fr) auto; }'//NL)
+      call sb_put(sb, '.rrl { grid-template-columns: 11px minmax(0, 1fr) auto auto; }'//NL)
+      call sb_put(sb, '.rrow:hover, .rrl:hover { background: rgba(216,166,87,.07); }'//NL)
+      call sb_put(sb, '.rrl.sel { background: rgba(216,166,87,.1); box-shadow: inset 2px 0 0 var(--gold); }'//NL)
+      call sb_put(sb, '.rrow .t, .rrl .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: ')
+      call sb_put(sb, 'var(--parch); }'//NL)
+      call sb_put(sb, '.rrow .t em { font-size: 11px; color: var(--parch3); margin-left: 6px; }'//NL)
+      call sb_put(sb, '.rrow .w, .rrl .w { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono);')
+      call sb_put(sb, ' color: var(--parch3);'//NL)
+      call sb_put(sb, '                    white-space: nowrap; }'//NL)
+      call sb_put(sb, '.rrow .w b { font-weight: 400; color: var(--parch2); min-width: 26px; text-align: right; }'//NL)
+      call sb_put(sb, '.rrl .ic { display: flex; gap: 4px; font-family: var(--sym); font-size: 11px; white-space: ')
+      call sb_put(sb, 'nowrap; }'//NL)
+      call sb_put(sb, '.rrl .ic i { font-style: normal; }'//NL)
+      call sb_put(sb, '.rrl .ic .iw { color: #f07c60; } .rrl .ic .ia { color: #E8C35A; } .rrl .ic .if { color: #ea')
+      call sb_put(sb, 'a650; }'//NL)
+      call sb_put(sb, '.rrl.fam .t { color: #f2c48a; }'//NL)
+      call sb_put(sb, '.relb { position: relative; width: 46px; height: 5px; border-radius: 3px; background: rgba(')
+      call sb_put(sb, '233,220,192,.1);'//NL)
+      call sb_put(sb, '        overflow: hidden; flex: none; }'//NL)
+      call sb_put(sb, '.relb i { position: absolute; top: 0; bottom: 0; }'//NL)
+      call sb_put(sb, '.relb::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; b')
+      call sb_put(sb, 'ackground: rgba(233,220,192,.4); }'//NL)
+      call sb_put(sb, '.tsum { padding: 0 6px 5px; font-size: 11.5px; font-style: italic; color: var(--parch3); }'//NL)
+      call sb_put(sb, '.wkey .w { border-color: #ED331F; } .wkey .a { border-color: #E8C35A; }'//NL)
+      call sb_put(sb, '.wkey .p { border-top-style: dotted; border-color: #3FB8AF; }'//NL)
+      call sb_put(sb, '.wkey .tr { border-top-style: dotted; border-color: #F2F2F2; } .wkey .tn { border-top-style')
+      call sb_put(sb, ': dashed; border-color: #F0A030; }'//NL)
+      call sb_put(sb, '.wfr { display: flex; gap: 7px; align-items: center; margin-top: 5px; font-size: 12px; line')
+      call sb_put(sb, '-height: 1.35; color: var(--parch2); }'//NL)
+      call sb_put(sb, '.wfr svg.i { width: 14px; height: 14px; color: #f07c60; flex: none; }'//NL)
+      call sb_put(sb, '.wfr b { font-weight: 600; color: var(--parch); }'//NL)
+      call sb_put(sb, '.bdl { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 12px; colo')
+      call sb_put(sb, 'r: var(--parch3); }'//NL)
+      call sb_put(sb, '.bdl span:first-child { flex: 1; }'//NL)
+      call sb_put(sb, '.bdl b { font: 11.5px var(--mono); color: var(--parch); font-weight: 400; }'//NL)
+      call sb_put(sb, '.ent .t em.rep { font: normal 10px var(--mono); color: var(--gold); margin-left: 6px; }'//NL)
       call sb_put(sb, NL)
       call sb_put(sb, '/* ===== the realm card (hover and pinned) and the tallies of war and trade */'//NL)
       call sb_put(sb, '#tip.wide { width: 336px; }'//NL)
@@ -23928,8 +24916,8 @@ contains
       call sb_put(sb, '></svg></button>'//NL)
       call sb_put(sb, '  </div>'//NL)
       call sb_put(sb, '  <div class="vsep"></div>'//NL)
-      call sb_put(sb, '  <div class="sw" id="purist" data-tip="Purist|Strip the world back to plain B3/S23 on a to')
-      call sb_put(sb, 'rus: no sky, no fire, no gods.|P">'//NL)
+      call sb_put(sb, '  <div class="sw" id="purist" data-tip="Purist|Strip the world back to plain B3/S23 on a bo')
+      call sb_put(sb, 'unded board: no sky, no fire, no gods.|P">'//NL)
       call sb_put(sb, '   <div class="tr"></div><div class="lb"><b>Purist</b><span>B3/S23</span></div>'//NL)
       call sb_put(sb, '  </div>'//NL)
       call sb_put(sb, '  <div class="vsep"></div>'//NL)
@@ -23943,8 +24931,8 @@ contains
       call sb_put(sb, ' </header>'//NL)
       call sb_put(sb, ' <nav id="rail"></nav>'//NL)
       call sb_put(sb, ' <main id="stage">'//NL)
-      call sb_put(sb, '  <div id="plate"><canvas id="map"></canvas><canvas id="ovl"></canvas><div id="labels"></di')
-      call sb_put(sb, 'v></div>'//NL)
+      call sb_put(sb, '  <div id="plate"><canvas id="map"></canvas><canvas id="edge"></canvas><canvas id="ovl"></c')
+      call sb_put(sb, 'anvas><div id="labels"></div></div>'//NL)
       call sb_put(sb, '  <div id="grat"></div>'//NL)
       call sb_put(sb, '  <div id="legend"></div>'//NL)
       call sb_put(sb, '  <div id="legend2"></div>'//NL)
@@ -23952,14 +24940,17 @@ contains
       call sb_put(sb, 'id="stx"></span></div>'//NL)
       call sb_put(sb, '  <div id="zoomtag"></div>'//NL)
       call sb_put(sb, '  <div id="banner" aria-live="polite"></div>'//NL)
-      call sb_put(sb, '  <div id="hero" class="min" data-tip="The world from orbit|The planet is a doughnut: the m')
-      call sb_put(sb, 'ap is its skin unrolled, and every edge of the map joins the opposite one. Click to see it ')
-      call sb_put(sb, 'turn.|O">'//NL)
+      call sb_put(sb, '  <div id="news" aria-live="polite"></div>'//NL)
+      call sb_put(sb, '  <div id="hero" class="min" data-tip="The world from orbit|A flat world adrift among the s')
+      call sb_put(sb, 'tars, its seas running to the edge and pouring off into the abyss. Click to see it turn.|O"')
+      call sb_put(sb, '>'//NL)
       call sb_put(sb, '   <canvas width="640" height="400"></canvas>'//NL)
       call sb_put(sb, '   <div class="cap">From orbit<span id="herot"></span></div>'//NL)
       call sb_put(sb, '   <button class="ib x" id="herox" aria-label="minimise"><svg class="i"><use href="#i-x"/><')
       call sb_put(sb, '/svg></button>'//NL)
-      call sb_put(sb, '   <div class="mini"><svg class="i"><use href="#i-orbit"/></svg></div>'//NL)
+      call sb_put(sb, '   <div class="mini"><svg class="i" viewBox="0 0 24 24"><path d="M2.5 10.5 12 6l9.5 4.5L12 ')
+      call sb_put(sb, '15z"/><path d="M5.5 12.3v3.4M9 14v4M15 14v4M18.5 12.3v3.4" stroke-dasharray="1.5 1.5"/><pat')
+      call sb_put(sb, 'h d="M19 2.5v2.4M17.8 3.7h2.4"/></svg></div>'//NL)
       call sb_put(sb, '  </div>'//NL)
       call sb_put(sb, '  <div id="tip" class="card"></div>'//NL)
       call sb_put(sb, '  <div id="dossier" class="card"></div>'//NL)
@@ -23989,8 +24980,10 @@ contains
       call sb_put(sb, '    <div class="ph"><h3>The Chronicle</h3><div class="rule"></div><span id="ccount"></span>'//NL)
       call sb_put(sb, '     <div class="seg" id="cfilt"><button class="on" data-f="major" data-tip="Major events|W')
       call sb_put(sb, 'ars, peace, famines, the rise and fall of realms and faiths, and anything of weight.">Major')
-      call sb_put(sb, ' events</button><button data-f="all" data-tip="Every entry|Every birth, fire and caravan th')
-      call sb_put(sb, 'e Chronicle records.">All</button></div></div>'//NL)
+      call sb_put(sb, '</button><button data-f="realms" data-tip="The realms|Only what passes between the realms a')
+      call sb_put(sb, 'nd within them: wars, treaties, conquests, revolts, the rise and fall of kingdoms.">Realms<')
+      call sb_put(sb, '/button><button data-f="all" data-tip="Every entry|Every birth, fire and caravan the Chroni')
+      call sb_put(sb, 'cle records.">All</button></div></div>'//NL)
       call sb_put(sb, '    <div id="clist"></div>'//NL)
       call sb_put(sb, '   </div>'//NL)
       call sb_put(sb, '  </section>'//NL)
@@ -24223,14 +25216,19 @@ contains
       call sb_put(sb, '    return b.buffer;'//NL)
       call sb_put(sb, '  } catch (e) { return null; }'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, '// ''RLF1'', int32 w, h, tick (little endian), then RGBA'//NL)
+      call sb_put(sb, '// ''RLF1'': int32 w, h, tick (little endian), then RGBA; ''RLF2'' puts the world''s versio')
+      call sb_put(sb, 'n, int32, after'//NL)
+      call sb_put(sb, '// the tick.  An empty or short answer is no frame (to a frame asked with have=, it means: ')
+      call sb_put(sb, 'no news).'//NL)
       call sb_put(sb, 'function parseRLF(buf) {'//NL)
       call sb_put(sb, '  if (!buf || buf.byteLength < 16) return null;'//NL)
-      call sb_put(sb, '  const d = new DataView(buf);'//NL)
-      call sb_put(sb, '  if (d.getUint32(0, false) !== 0x524c4631) return null;'//NL)
-      call sb_put(sb, '  const w = d.getInt32(4, true), h = d.getInt32(8, true), tick = d.getInt32(12, true);'//NL)
-      call sb_put(sb, '  if (w <= 0 || h <= 0 || buf.byteLength < 16 + 4 * w * h) return null;'//NL)
-      call sb_put(sb, '  return { w, h, tick, px: new Uint8ClampedArray(buf, 16, 4 * w * h) };'//NL)
+      call sb_put(sb, '  const d = new DataView(buf), m = d.getUint32(0, false), n = m === 0x524c4632 ? 20 : m ===')
+      call sb_put(sb, ' 0x524c4631 ? 16 : 0;'//NL)
+      call sb_put(sb, '  if (!n || buf.byteLength < n) return null;'//NL)
+      call sb_put(sb, '  const w = d.getInt32(4, true), h = d.getInt32(8, true), tick = d.getInt32(12, true), ver ')
+      call sb_put(sb, '= n === 20 ? d.getInt32(16, true) : -1;'//NL)
+      call sb_put(sb, '  if (w <= 0 || h <= 0 || buf.byteLength < n + 4 * w * h) return null;'//NL)
+      call sb_put(sb, '  return { w, h, tick, ver, px: new Uint8ClampedArray(buf, n, 4 * w * h) };'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
       call sb_put(sb, '// ===================================================================== tooltips: data-tip')
@@ -24284,15 +25282,16 @@ contains
       call sb_put(sb, '  names: new Map(), paused: false, tpf: 2, deep: false, purist: false, prevView: 0,'//NL)
       call sb_put(sb, '  pw: 10, ph: 10, px0: 0, py0: 0, dpr: 1, fwin: null, tick: 0, dirty: true,'//NL)
       call sb_put(sb, '  hover: null, drag: null, online: true, ripples: [], plab: new Map(), placeKey: '''','//NL)
-      call sb_put(sb, '  hits: [], hoverRealm: 0, pinRealm: 0, pinCell: null, lastTpf: 1, home: null'//NL)
+      call sb_put(sb, '  hits: [], hoverRealm: 0, pinRealm: 0, pinCell: null, lastTpf: 1, home: null,'//NL)
+      call sb_put(sb, '  glide: null, edgeOpen: false, fkey: '''', fver: -1'//NL)
       call sb_put(sb, '};'//NL)
       call sb_put(sb, 'const VIEWS = ['//NL)
       call sb_put(sb, '  [0, ''living'', ''Living'', ''The world as it is: day and night, ice, verdure and the liv')
       call sb_put(sb, 'ing.'', ''1''],'//NL)
       call sb_put(sb, '  [1, ''peoples'', ''Peoples'', ''Stained glass: each land cell takes the people living nea')
       call sb_put(sb, 'rest to it.'', ''2''],'//NL)
-      call sb_put(sb, '  [2, ''climate'', ''Climate'', ''Temperature, from the frozen rims to the warm belt.'', ''')
-      call sb_put(sb, '3''],'//NL)
+      call sb_put(sb, '  [2, ''climate'', ''Climate'', ''Temperature, from the frozen poles to the warm equator.''')
+      call sb_put(sb, ', ''3''],'//NL)
       call sb_put(sb, '  [3, ''water'', ''Water'', ''Soil moisture, rain and the rivers.'', ''4''],'//NL)
       call sb_put(sb, '  [4, ''frost'', ''Frost'', ''The Ising frost: every cell of ice leans on its neighbours.''')
       call sb_put(sb, ', ''5''],'//NL)
@@ -24364,7 +25363,6 @@ contains
       call sb_put(sb, ' Chaos''], [''LRRRRRLLR'', ''the Weaver''],'//NL)
       call sb_put(sb, '  [''RRLL'', ''the Brain'']];'//NL)
       call sb_put(sb, NL)
-      call sb_put(sb, 'const wrap1 = (v, n) => ((Math.round(v) - 1) % n + n) % n + 1;'//NL)
       call sb_put(sb, 'const mod = (a, n) => ((a % n) + n) % n;'//NL)
       call sb_put(sb, 'function win(z, cx, cy) {'//NL)
       call sb_put(sb, '  z = z || G.z;'//NL)
@@ -24372,20 +25370,43 @@ contains
       call sb_put(sb, '    j0: (cy == null ? G.cy : cy) + Math.floor(G.ny / (2 * z)), wx: G.nx / z, wy: G.ny / z, ')
       call sb_put(sb, 'z };'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, '// a cell''s centre on the plate (CSS px); null when outside the window'//NL)
-      call sb_put(sb, 'function c2s(x, y, w) {'//NL)
-      call sb_put(sb, '  w = w || win();'//NL)
-      call sb_put(sb, '  const cw = G.pw / w.wx, ch = G.ph / w.wy;'//NL)
-      call sb_put(sb, '  const dx = mod(x - w.i0, G.nx), dy = mod(w.j0 - y, G.ny);'//NL)
-      call sb_put(sb, '  if (dx >= w.wx || dy >= w.wy) return null;'//NL)
-      call sb_put(sb, '  return [(dx + 0.5) * cw, (dy + 0.5) * ch];'//NL)
+      call sb_put(sb, '// the pan limit, the same as the server''s: a window may hang over an edge of the world by')
+      call sb_put(sb, ' a quarter'//NL)
+      call sb_put(sb, '// of its width or height and no more, so at least three quarters of each axis is always th')
+      call sb_put(sb, 'e world'//NL)
+      call sb_put(sb, 'function viewLim(z) {'//NL)
+      call sb_put(sb, '  z = z || G.z;'//NL)
+      call sb_put(sb, '  const ax = Math.floor(G.nx / (4 * z)), ay = Math.floor(G.ny / (4 * z));'//NL)
+      call sb_put(sb, '  return [ax, G.nx - ax, ay, G.ny - ay];'//NL)
       call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function viewClamp(cx, cy, z) {'//NL)
+      call sb_put(sb, '  const L = viewLim(z);'//NL)
+      call sb_put(sb, '  return [clamp(Math.round(cx), L[0], L[1]), clamp(Math.round(cy), L[2], L[3])];'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a cell''s centre on the plate (CSS px); null when outside the window, or off the board'//NL)
+      call sb_put(sb, 'function c2s(x, y, w) {'//NL)
+      call sb_put(sb, '  if (!(x >= 1 && y >= 1 && x <= G.nx && y <= G.ny)) return null;'//NL)
+      call sb_put(sb, '  w = w || win();'//NL)
+      call sb_put(sb, '  const dx = x - w.i0, dy = w.j0 - y;'//NL)
+      call sb_put(sb, '  if (dx < 0 || dy < 0 || dx >= w.wx || dy >= w.wy) return null;'//NL)
+      call sb_put(sb, '  return [(dx + 0.5) * G.pw / w.wx, (dy + 0.5) * G.ph / w.wy];'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the cell under a point of the plate; null beyond the edge of the world, where there is n')
+      call sb_put(sb, 'one'//NL)
       call sb_put(sb, 'function s2c(sx, sy) {'//NL)
-      call sb_put(sb, '  const w = win(), cw = G.pw / w.wx, ch = G.ph / w.wy;'//NL)
-      call sb_put(sb, '  return [wrap1(w.i0 + Math.floor(sx / cw), G.nx), wrap1(w.j0 - Math.floor(sy / ch), G.ny)]')
-      call sb_put(sb, ';'//NL)
+      call sb_put(sb, '  const w = win(), i = Math.floor(w.i0 + sx * w.wx / G.pw), j = Math.ceil(w.j0 - sy * w.wy ')
+      call sb_put(sb, '/ G.ph);'//NL)
+      call sb_put(sb, '  return i >= 1 && j >= 1 && i <= G.nx && j <= G.ny ? [i, j] : null;'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'const cellPx = () => G.pw / (G.nx / G.z);'//NL)
+      call sb_put(sb, '// the board on the plate (CSS px) for the window w: near an edge it leaves the void showin')
+      call sb_put(sb, 'g'//NL)
+      call sb_put(sb, 'function boardRect(w) {'//NL)
+      call sb_put(sb, '  w = w || win();'//NL)
+      call sb_put(sb, '  const cw = G.pw / w.wx, ch = G.ph / w.wy;'//NL)
+      call sb_put(sb, '  return { l: (1 - w.i0) * cw, t: (w.j0 - G.ny) * ch, r: (G.nx + 1 - w.i0) * cw, b: w.j0 * ')
+      call sb_put(sb, 'ch };'//NL)
+      call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
       call sb_put(sb, '// ===================================================================== layout of the plat')
       call sb_put(sb, 'e'//NL)
@@ -24402,7 +25423,7 @@ contains
       call sb_put(sb, '  const pl = $(''#plate'');'//NL)
       call sb_put(sb, '  Object.assign(pl.style, { left: x0 + ''px'', top: y0 + ''px'', width: pw + ''px'', height')
       call sb_put(sb, ': ph + ''px'' });'//NL)
-      call sb_put(sb, '  for (const c of [$(''#map''), $(''#ovl'')]) {'//NL)
+      call sb_put(sb, '  for (const c of [$(''#map''), $(''#edge''), $(''#ovl'')]) {'//NL)
       call sb_put(sb, '    c.width = Math.round(pw * G.dpr); c.height = Math.round(ph * G.dpr);'//NL)
       call sb_put(sb, '    c.style.width = pw + ''px''; c.style.height = ph + ''px'';'//NL)
       call sb_put(sb, '  }'//NL)
@@ -24425,9 +25446,9 @@ contains
       call sb_put(sb, '  G.dirty = true;'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function graticule() {'//NL)
-      call sb_put(sb, '  // the plate''s corners, and no more than a quiet N above and S below: the map is the ski')
-      call sb_put(sb, 'n of a'//NL)
-      call sb_put(sb, '  // doughnut unrolled, and every edge joins the opposite one'//NL)
+      call sb_put(sb, '  // the plate''s corners, and no more than a quiet N above and S below: north is up, and t')
+      call sb_put(sb, 'he poles'//NL)
+      call sb_put(sb, '  // lie along the top and the bottom of the world'//NL)
       call sb_put(sb, '  const g = $(''#grat''), x0 = G.px0, y0 = G.py0, pw = G.pw, ph = G.ph;'//NL)
       call sb_put(sb, '  let h = '''';'//NL)
       call sb_put(sb, '  for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]])'//NL)
@@ -24465,38 +25486,437 @@ contains
       call sb_put(sb, '  if (f.w !== G.fw || f.h !== G.fh) { G.fw = f.w; G.fh = f.h; layout(); }'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'const HASF = ''filter'' in CanvasRenderingContext2D.prototype;'//NL)
+      call sb_put(sb, '// a fault in the ornament beyond the edge must not stop the map'//NL)
+      call sb_put(sb, 'function artSafe(fn, ...a) {'//NL)
+      call sb_put(sb, '  try { fn(...a); } catch (e) { if (!G.artErr) { G.artErr = 1; report(''edge art: '' + (e.s')
+      call sb_put(sb, 'tack || e.message)); } }'//NL)
+      call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function drawMap() {'//NL)
-      call sb_put(sb, '  const c = $(''#map''), ctx = c.getContext(''2d''), W = c.width, H = c.height;'//NL)
+      call sb_put(sb, '  const c = $(''#map''), ctx = c.getContext(''2d''), W = c.width, H = c.height, k = W / G.p')
+      call sb_put(sb, 'w;'//NL)
+      call sb_put(sb, '  ctx.setTransform(1, 0, 0, 1, 0, 0);'//NL)
       call sb_put(sb, '  ctx.globalCompositeOperation = ''source-over''; ctx.globalAlpha = 1;'//NL)
       call sb_put(sb, '  if (HASF) ctx.filter = ''none'';'//NL)
-      call sb_put(sb, '  ctx.fillStyle = ''#05070c''; ctx.fillRect(0, 0, W, H);'//NL)
-      call sb_put(sb, '  if (!FC.width) return;'//NL)
-      call sb_put(sb, '  let ox = 0, oy = 0;'//NL)
-      call sb_put(sb, '  const fw = G.fwin;'//NL)
-      call sb_put(sb, '  if (fw && fw.z === G.z) {'//NL)
-      call sb_put(sb, '    let dx = mod(G.cx - fw.cx + G.nx / 2, G.nx) - G.nx / 2, dy = mod(G.cy - fw.cy + G.ny / ')
-      call sb_put(sb, '2, G.ny) - G.ny / 2;'//NL)
-      call sb_put(sb, '    const cw = W / (G.nx / G.z), ch = H / (G.ny / G.z);'//NL)
-      call sb_put(sb, '    ox = -dx * cw; oy = dy * ch;'//NL)
+      call sb_put(sb, '  // the board in device px; whatever of the plate it leaves bare is the void beyond the Wo')
+      call sb_put(sb, 'rld''s Edge'//NL)
+      call sb_put(sb, '  const w = win(), B = boardRect(w), l = B.l * k, t = B.t * k, r = B.r * k, b = B.b * k;'//NL)
+      call sb_put(sb, '  G.edgeOpen = l > 0.5 || t > 0.5 || r < W - 0.5 || b < H - 0.5;'//NL)
+      call sb_put(sb, '  if (G.edgeOpen) artSafe(drawVoid, ctx, W, H, k, l, t, r, b);'//NL)
+      call sb_put(sb, '  ctx.save();'//NL)
+      call sb_put(sb, '  ctx.beginPath(); ctx.rect(l, t, r - l, b - t); ctx.clip();'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''#05070c''; ctx.fillRect(l, t, r - l, b - t);'//NL)
+      call sb_put(sb, '  if (FC.width) {'//NL)
+      call sb_put(sb, '    // the frame in hand, wherever its window lies in this one (a step behind a drag, or at')
+      call sb_put(sb, ' another zoom)'//NL)
+      call sb_put(sb, '    const fw = G.fwin || { z: G.z, cx: G.cx, cy: G.cy }, cw = W / w.wx, ch = H / w.wy;'//NL)
+      call sb_put(sb, '    const fx = (fw.cx - Math.floor(G.nx / (2 * fw.z)) + 1 - w.i0) * cw, fy = (w.j0 - fw.cy ')
+      call sb_put(sb, '- Math.floor(G.ny / (2 * fw.z))) * ch;'//NL)
+      call sb_put(sb, '    const fW = G.nx / fw.z * cw, fH = G.ny / fw.z * ch;'//NL)
+      call sb_put(sb, '    ctx.imageSmoothingEnabled = false;'//NL)
+      call sb_put(sb, '    ctx.drawImage(FC, fx, fy, fW, fH);'//NL)
+      call sb_put(sb, '    ctx.imageSmoothingEnabled = true;'//NL)
+      call sb_put(sb, '    ctx.globalCompositeOperation = ''lighter'';'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = G.view === 9 ? 0.35 : 0.62;'//NL)
+      call sb_put(sb, '    if (HASF) ctx.filter = `blur(${Math.max(2, W / 200).toFixed(1)}px)`;'//NL)
+      call sb_put(sb, '    ctx.drawImage(BC, fx, fy, fW, fH);'//NL)
+      call sb_put(sb, '    if (HASF) ctx.filter = ''none'';'//NL)
+      call sb_put(sb, '    ctx.globalCompositeOperation = ''source-over''; ctx.globalAlpha = 1;'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  const tl = (G.z === 1 && (ox || oy)) ? [-1, 0, 1] : [0];'//NL)
-      call sb_put(sb, '  ctx.imageSmoothingEnabled = false;'//NL)
-      call sb_put(sb, '  for (const ty of tl) for (const tx of tl) ctx.drawImage(FC, ox + tx * W, oy + ty * H, W, ')
-      call sb_put(sb, 'H);'//NL)
-      call sb_put(sb, '  ctx.imageSmoothingEnabled = true;'//NL)
-      call sb_put(sb, '  ctx.globalCompositeOperation = ''lighter'';'//NL)
-      call sb_put(sb, '  ctx.globalAlpha = G.view === 9 ? 0.35 : 0.62;'//NL)
-      call sb_put(sb, '  if (HASF) ctx.filter = `blur(${Math.max(2, W / 200).toFixed(1)}px)`;'//NL)
-      call sb_put(sb, '  for (const ty of tl) for (const tx of tl) ctx.drawImage(BC, ox + tx * W, oy + ty * H, W, ')
-      call sb_put(sb, 'H);'//NL)
-      call sb_put(sb, '  if (HASF) ctx.filter = ''none'';'//NL)
-      call sb_put(sb, '  ctx.globalCompositeOperation = ''source-over''; ctx.globalAlpha = 1;'//NL)
+      call sb_put(sb, '  ctx.restore();'//NL)
       call sb_put(sb, '  // a vignette, as on an old plate'//NL)
       call sb_put(sb, '  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.62);'//NL)
       call sb_put(sb, '  g.addColorStop(0, ''rgba(0,0,0,0)''); g.addColorStop(1, ''rgba(3,4,8,.38)'');'//NL)
       call sb_put(sb, '  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);'//NL)
+      call sb_put(sb, '  if (G.edgeOpen) artSafe(drawBrink, ctx, W, H, k, l, t, r, b);'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'const frameURL = () => `/frame?v=${G.view}&z=${G.z}&cx=${G.cx}&cy=${G.cy}&hl=${G.hl}`;'//NL)
+      call sb_put(sb, NL)
+      call sb_put(sb, '// ===================================================================== the World''s Edge'//NL)
+      call sb_put(sb, '// The world is flat, and floats in the void.  Pan toward an edge and you look over it: the')
+      call sb_put(sb, ' deep sky'//NL)
+      call sb_put(sb, '// and a faint nebula (made once, and drifting slower than the map, as far things do), a pa')
+      call sb_put(sb, 'le mist'//NL)
+      call sb_put(sb, '// where the sea goes over, a gilt hairline round the world, compass roses and inscriptions')
+      call sb_put(sb, '; and on'//NL)
+      call sb_put(sb, '// #edge, drawn afresh each frame while the void is in view, the falls themselves, pouring ')
+      call sb_put(sb, 'away.'//NL)
+      call sb_put(sb, 'const EDGEF = ''"Iowan Old Style", Palatino, "Palatino Linotype", "P052", "URW Palladio L",')
+      call sb_put(sb, ' Georgia, serif'';'//NL)
+      call sb_put(sb, 'const ART = { k: 0, W: 0, H: 0, mot: {} };'//NL)
+      call sb_put(sb, 'const rnd = s => () => {                                   // a small seeded generator (mul')
+      call sb_put(sb, 'berry32)'//NL)
+      call sb_put(sb, '  s = (s + 0x6D2B79F5) | 0;'//NL)
+      call sb_put(sb, '  let t = Math.imul(s ^ (s >>> 15), 1 | s);'//NL)
+      call sb_put(sb, '  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;'//NL)
+      call sb_put(sb, '  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;'//NL)
+      call sb_put(sb, '};'//NL)
+      call sb_put(sb, 'function edgeArt(W, H, k) {'//NL)
+      call sb_put(sb, '  if (ART.k !== k) {'//NL)
+      call sb_put(sb, '    ART.k = k; ART.rose = null; ART.mot = {};'//NL)
+      call sb_put(sb, '    ART.far = starTile(Math.round(512 * k), 1100, 7, k, false);'//NL)
+      call sb_put(sb, '    ART.near = starTile(Math.round(736 * k), 150, 11, k, true);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  if (ART.W !== W || ART.H !== H) { ART.W = W; ART.H = H; ART.nm = Math.ceil(0.05 * W); ART')
+      call sb_put(sb, '.neb = nebula(W, H, ART.nm); }'//NL)
+      call sb_put(sb, '  return ART;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a square of sky that tiles without a seam: whatever crosses its edge is drawn again acro')
+      call sb_put(sb, 'ss the way'//NL)
+      call sb_put(sb, 'function starTile(T, n, seed, k, near) {'//NL)
+      call sb_put(sb, '  const c = document.createElement(''canvas'');'//NL)
+      call sb_put(sb, '  c.width = c.height = T;'//NL)
+      call sb_put(sb, '  const x = c.getContext(''2d''), r = rnd(seed), TINT = [''255,255,255'', ''206,222,255'', ')
+      call sb_put(sb, '''255,232,196'', ''186,206,255'', ''255,208,184''];'//NL)
+      call sb_put(sb, '  const at = (u, v, R, fn) => {'//NL)
+      call sb_put(sb, '    for (const a of [-T, 0, T]) for (const b of [-T, 0, T]) {'//NL)
+      call sb_put(sb, '      const p = u + a, q = v + b;'//NL)
+      call sb_put(sb, '      if (p > -R && p < T + R && q > -R && q < T + R) fn(p, q);'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  for (let i = 0; i < n; i++) {'//NL)
+      call sb_put(sb, '    const u = r() * T, v = r() * T, m = r(), tint = TINT[Math.floor(r() * r() * TINT.length')
+      call sb_put(sb, ')];'//NL)
+      call sb_put(sb, '    const s = (near ? 0.5 + 1.1 * m * m : 0.32 + 0.62 * m * m * m) * k, al = near ? 0.38 + ')
+      call sb_put(sb, '0.55 * r() : 0.14 + 0.6 * r() * r();'//NL)
+      call sb_put(sb, '    x.fillStyle = `rgba(${tint},${al.toFixed(2)})`;'//NL)
+      call sb_put(sb, '    at(u, v, s, (p, q) => { x.beginPath(); x.arc(p, q, s, 0, 7); x.fill(); });'//NL)
+      call sb_put(sb, '    if (!near || m < 0.84) continue;'//NL)
+      call sb_put(sb, '    const R = (4 + 6 * r()) * k;                         // a bright one: a halo and four f')
+      call sb_put(sb, 'ine rays'//NL)
+      call sb_put(sb, '    at(u, v, 2 * R, (p, q) => {'//NL)
+      call sb_put(sb, '      let g = x.createRadialGradient(p, q, 0, p, q, R);'//NL)
+      call sb_put(sb, '      g.addColorStop(0, `rgba(${tint},.42)`); g.addColorStop(1, `rgba(${tint},0)`);'//NL)
+      call sb_put(sb, '      x.fillStyle = g; x.fillRect(p - R, q - R, 2 * R, 2 * R);'//NL)
+      call sb_put(sb, '      for (const hz of [true, false]) {'//NL)
+      call sb_put(sb, '        g = hz ? x.createLinearGradient(p - 2 * R, 0, p + 2 * R, 0) : x.createLinearGradien')
+      call sb_put(sb, 't(0, q - 2 * R, 0, q + 2 * R);'//NL)
+      call sb_put(sb, '        g.addColorStop(0, `rgba(${tint},0)`); g.addColorStop(0.5, `rgba(${tint},.7)`); g.ad')
+      call sb_put(sb, 'dColorStop(1, `rgba(${tint},0)`);'//NL)
+      call sb_put(sb, '        x.fillStyle = g;'//NL)
+      call sb_put(sb, '        if (hz) x.fillRect(p - 2 * R, q - 0.35 * k, 4 * R, 0.7 * k); else x.fillRect(p - 0.')
+      call sb_put(sb, '35 * k, q - 2 * R, 0.7 * k, 4 * R);'//NL)
+      call sb_put(sb, '      }'//NL)
+      call sb_put(sb, '    });'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  for (let i = 0; near && i < 2; i++) {                  // and far off, the smudge of anot')
+      call sb_put(sb, 'her island of stars'//NL)
+      call sb_put(sb, '    const R = (10 + 8 * r()) * k, u = 2 * R + r() * (T - 4 * R), v = 2 * R + r() * (T - 4 *')
+      call sb_put(sb, ' R);'//NL)
+      call sb_put(sb, '    x.save(); x.translate(u, v); x.rotate(r() * 3.1); x.scale(1, 0.34);'//NL)
+      call sb_put(sb, '    const g = x.createRadialGradient(0, 0, 0, 0, 0, R);'//NL)
+      call sb_put(sb, '    g.addColorStop(0, ''rgba(255,238,214,.34)''); g.addColorStop(0.3, ''rgba(196,188,255,.1')
+      call sb_put(sb, '2)''); g.addColorStop(1, ''rgba(160,170,255,0)'');'//NL)
+      call sb_put(sb, '    x.fillStyle = g; x.fillRect(-R, -R, 2 * R, 2 * R); x.restore();'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  return c;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the nebula, at half the resolution (it is all softness), with a margin to drift in'//NL)
+      call sb_put(sb, 'function nebula(W, H, m) {'//NL)
+      call sb_put(sb, '  const c = document.createElement(''canvas''), w = c.width = Math.ceil((W + 2 * m) / 2), h')
+      call sb_put(sb, ' = c.height = Math.ceil((H + 2 * m) / 2);'//NL)
+      call sb_put(sb, '  const x = c.getContext(''2d''), r = rnd(29), COL = [''86,62,164'', ''36,94,138'', ''128,5')
+      call sb_put(sb, '8,104'', ''60,52,130'', ''150,112,62'', ''42,74,134''];'//NL)
+      call sb_put(sb, '  const A = -0.42, ca = Math.cos(A), sa = Math.sin(A);'//NL)
+      call sb_put(sb, '  x.globalCompositeOperation = ''lighter'';'//NL)
+      call sb_put(sb, '  // the band of the galaxy, aslant, with clouds strung along it and a few strays'//NL)
+      call sb_put(sb, '  x.save(); x.translate(w / 2, h / 2); x.rotate(A); x.scale(1, 0.17);'//NL)
+      call sb_put(sb, '  let g = x.createRadialGradient(0, 0, 0, 0, 0, 0.8 * w);'//NL)
+      call sb_put(sb, '  g.addColorStop(0, ''rgba(118,128,190,.16)''); g.addColorStop(1, ''rgba(118,128,190,0)'');'//NL)
+      call sb_put(sb, '  x.fillStyle = g; x.fillRect(-w, -w, 2 * w, 2 * w); x.restore();'//NL)
+      call sb_put(sb, '  for (let i = 0; i < 22; i++) {'//NL)
+      call sb_put(sb, '    const s = (r() - 0.5) * 1.3 * w, o = (r() - 0.5) * (i < 15 ? 0.4 : 1.6) * h, R = (0.05 ')
+      call sb_put(sb, '+ 0.14 * r()) * w;'//NL)
+      call sb_put(sb, '    const u = w / 2 + s * ca - o * sa, v = h / 2 + s * sa + o * ca, col = COL[i % COL.lengt')
+      call sb_put(sb, 'h], a = 0.05 + 0.08 * r();'//NL)
+      call sb_put(sb, '    g = x.createRadialGradient(u, v, 0, u, v, R);'//NL)
+      call sb_put(sb, '    g.addColorStop(0, `rgba(${col},${a.toFixed(3)})`); g.addColorStop(0.55, `rgba(${col},${')
+      call sb_put(sb, '(a * 0.4).toFixed(3)})`);'//NL)
+      call sb_put(sb, '    g.addColorStop(1, `rgba(${col},0)`);'//NL)
+      call sb_put(sb, '    x.fillStyle = g; x.fillRect(u - R, v - R, 2 * R, 2 * R);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  return c;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the void: the far sky moves a tenth as fast as the world under the eye, the near stars a')
+      call sb_put(sb, ' fifth'//NL)
+      call sb_put(sb, 'function drawVoid(ctx, W, H, k, l, t, r, b) {'//NL)
+      call sb_put(sb, '  const A = edgeArt(W, H, k), m = A.nm, ux = (G.cx - G.nx / 2) * W / G.nx, uy = (G.cy - G.n')
+      call sb_put(sb, 'y / 2) * H / G.ny;'//NL)
+      call sb_put(sb, '  ctx.save();'//NL)
+      call sb_put(sb, '  ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(l, t, r - l, b - t); ctx.clip(''evenodd''')
+      call sb_put(sb, ');'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''#020309''; ctx.fillRect(0, 0, W, H);'//NL)
+      call sb_put(sb, '  ctx.imageSmoothingEnabled = true;'//NL)
+      call sb_put(sb, '  ctx.drawImage(A.neb, -m - clamp(ux * 0.05, -m, m), -m + clamp(uy * 0.05, -m, m), W + 2 * ')
+      call sb_put(sb, 'm, H + 2 * m);'//NL)
+      call sb_put(sb, '  for (const [T, f] of [[A.far, 0.1], [A.near, 0.22]]) {'//NL)
+      call sb_put(sb, '    const ox = Math.round(-ux * f), oy = Math.round(uy * f);'//NL)
+      call sb_put(sb, '    ctx.translate(ox, oy);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = ctx.createPattern(T, ''repeat''); ctx.fillRect(-ox, -oy, W, H);'//NL)
+      call sb_put(sb, '    ctx.translate(-ox, -oy);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  ctx.restore();'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the brink: mist over the void beside the falls, inscriptions, two roses, the gilt hairli')
+      call sb_put(sb, 'ne round the world'//NL)
+      call sb_put(sb, 'function drawBrink(ctx, W, H, k, l, t, r, b) {'//NL)
+      call sb_put(sb, '  const M = 84 * k, ow = l > 0.5, oe = r < W - 0.5, on = t > 0.5, os = b < H - 0.5;'//NL)
+      call sb_put(sb, '  ctx.save();'//NL)
+      call sb_put(sb, '  ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(l, t, r - l, b - t); ctx.clip(''evenodd''')
+      call sb_put(sb, ');'//NL)
+      call sb_put(sb, '  // the mist where the sea goes over, and in it the faintest of rimbows; each corner takes')
+      call sb_put(sb, ' a quarter-round'//NL)
+      call sb_put(sb, '  const MIST = [[0, ''rgba(232,244,250,.44)''], [0.06, ''rgba(190,218,248,.3)''], [0.18, ''')
+      call sb_put(sb, 'rgba(166,202,240,.14)''],'//NL)
+      call sb_put(sb, '    [0.42, ''rgba(150,190,236,.055)''], [1, ''rgba(150,190,236,0)'']];'//NL)
+      call sb_put(sb, '  const BOW = [[0.3, ''rgba(255,96,80,0)''], [0.34, ''rgba(255,96,80,.05)''], [0.38, ''rgba')
+      call sb_put(sb, '(255,190,70,.055)''],'//NL)
+      call sb_put(sb, '    [0.42, ''rgba(120,230,120,.05)''], [0.46, ''rgba(90,150,255,.055)''], [0.5, ''rgba(160,')
+      call sb_put(sb, '100,255,.045)''], [0.54, ''rgba(160,100,255,0)'']];'//NL)
+      call sb_put(sb, '  const veil = (S, g) => { for (const [f, cl] of S) g.addColorStop(f, cl); return g; };'//NL)
+      call sb_put(sb, '  for (const S of [MIST, BOW]) {'//NL)
+      call sb_put(sb, '    if (ow) { ctx.fillStyle = veil(S, ctx.createLinearGradient(l, 0, l - M, 0)); ctx.fillRe')
+      call sb_put(sb, 'ct(l - M, t, M, b - t); }'//NL)
+      call sb_put(sb, '    if (oe) { ctx.fillStyle = veil(S, ctx.createLinearGradient(r, 0, r + M, 0)); ctx.fillRe')
+      call sb_put(sb, 'ct(r, t, M, b - t); }'//NL)
+      call sb_put(sb, '    if (on) { ctx.fillStyle = veil(S, ctx.createLinearGradient(0, t, 0, t - M)); ctx.fillRe')
+      call sb_put(sb, 'ct(l, t - M, r - l, M); }'//NL)
+      call sb_put(sb, '    if (os) { ctx.fillStyle = veil(S, ctx.createLinearGradient(0, b, 0, b + M)); ctx.fillRe')
+      call sb_put(sb, 'ct(l, b, r - l, M); }'//NL)
+      call sb_put(sb, '    for (const [x, y, sx, sy] of [[l, t, -1, -1], [r, t, 1, -1], [l, b, -1, 1], [r, b, 1, 1')
+      call sb_put(sb, ']]) {'//NL)
+      call sb_put(sb, '      if (x < -M || x > W + M || y < -M || y > H + M) continue;'//NL)
+      call sb_put(sb, '      ctx.fillStyle = veil(S, ctx.createRadialGradient(x, y, 0, x, y, M));'//NL)
+      call sb_put(sb, '      ctx.fillRect(sx < 0 ? x - M : x, sy < 0 ? y - M : y, M, M);'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  // the inscriptions, cut in the void along each edge and centred on what shows of it (but')
+      call sb_put(sb, ' never past'//NL)
+      call sb_put(sb, '  // its ends); where little shows, the Latin alone.  Beside the west edge and the east, a ')
+      call sb_put(sb, 'compass rose.'//NL)
+      call sb_put(sb, '  const D = 60 * k, mid = (a0, a1, span, h) => {'//NL)
+      call sb_put(sb, '    const c = (Math.max(a0, 0) + Math.min(a1, span)) / 2;'//NL)
+      call sb_put(sb, '    return a1 - a0 > 2 * h ? clamp(c, a0 + h, a1 - h) : (a0 + a1) / 2;'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  const cut = (txts, hz, f, a0, a1, rot) => {'//NL)
+      call sb_put(sb, '    const span = hz ? W : H, room = Math.min(a1, span) - Math.max(a0, 0);'//NL)
+      call sb_put(sb, '    let S = null;'//NL)
+      call sb_put(sb, '    for (const tx of txts) { S = mottoSprite(tx, k); if (S.width + 24 * k <= room) break; }'//NL)
+      call sb_put(sb, '    const hw = S.width / 2, m = mid(a0, a1, span, hw + 12 * k), x = hz ? m : f, y = hz ? f ')
+      call sb_put(sb, ': m;'//NL)
+      call sb_put(sb, '    if (x < -hw || x > W + hw || y < -hw || y > H + hw) return;'//NL)
+      call sb_put(sb, '    ctx.translate(x, y); ctx.rotate(rot); ctx.drawImage(S, -hw, -S.height / 2); ctx.setTran')
+      call sb_put(sb, 'sform(1, 0, 0, 1, 0, 0);'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  if (on) cut([''HIC FINIS MVNDI · HERE THE WORLD ENDS'', ''HIC FINIS MVNDI''], true, t - ')
+      call sb_put(sb, 'D, l, r, 0);'//NL)
+      call sb_put(sb, '  if (os) cut([''ORBIS TERMINVS · THE EDGE OF ALL THINGS'', ''ORBIS TERMINVS''], true, b +')
+      call sb_put(sb, ' D, l, r, 0);'//NL)
+      call sb_put(sb, '  if (ow) cut([''NON PLVS VLTRA · NOTHING BEYOND'', ''NON PLVS VLTRA''], false, l - D, t, ')
+      call sb_put(sb, 'b, -Math.PI / 2);'//NL)
+      call sb_put(sb, '  if (oe) cut([''IN ABYSSVM · INTO THE ABYSS'', ''IN ABYSSVM''], false, r + D, t, b, Math.')
+      call sb_put(sb, 'PI / 2);'//NL)
+      call sb_put(sb, '  const rose = roseSprite(k), hr = rose.width / 2, ry = mid(t, b, H, hr);'//NL)
+      call sb_put(sb, '  for (const [open, x] of [[ow, l - 160 * k], [oe, r + 160 * k]])'//NL)
+      call sb_put(sb, '    if (open && x > -hr && x < W + hr && ry > -hr && ry < H + hr) ctx.drawImage(rose, x - h')
+      call sb_put(sb, 'r, ry - hr);'//NL)
+      call sb_put(sb, '  // the gilt hairline round the world, a little out from the brink so the foam has room; a')
+      call sb_put(sb, ' ghost of it further out'//NL)
+      call sb_put(sb, '  const g = 5.5 * k;'//NL)
+      call sb_put(sb, '  ctx.lineWidth = k;'//NL)
+      call sb_put(sb, '  ctx.strokeStyle = ''rgba(216,166,87,.62)''; ctx.strokeRect(l - g, t - g, r - l + 2 * g, b')
+      call sb_put(sb, ' - t + 2 * g);'//NL)
+      call sb_put(sb, '  ctx.strokeStyle = ''rgba(216,166,87,.16)''; ctx.strokeRect(l - 2 * g, t - 2 * g, r - l + ')
+      call sb_put(sb, '4 * g, b - t + 4 * g);'//NL)
+      call sb_put(sb, '  ctx.restore();'//NL)
+      call sb_put(sb, '  // and a lozenge on each corner of it'//NL)
+      call sb_put(sb, '  ctx.lineWidth = k; ctx.fillStyle = ''#0b0f1a''; ctx.strokeStyle = ''rgba(216,166,87,.85)')
+      call sb_put(sb, ''';'//NL)
+      call sb_put(sb, '  for (const [x, y] of [[l - g, t - g], [r + g, t - g], [l - g, b + g], [r + g, b + g]]) {'//NL)
+      call sb_put(sb, '    const s = 4.5 * k;'//NL)
+      call sb_put(sb, '    if (x < -s || x > W + s || y < -s || y > H + s) continue;'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.moveTo(x, y - s); ctx.lineTo(x + s, y); ctx.lineTo(x, y + s); ctx.')
+      call sb_put(sb, 'lineTo(x - s, y); ctx.closePath();'//NL)
+      call sb_put(sb, '    ctx.fill(); ctx.stroke();'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a compass rose engraved in gilt: four long points and four short, each half in light and')
+      call sb_put(sb, ' half in shade'//NL)
+      call sb_put(sb, 'function roseSprite(k) {'//NL)
+      call sb_put(sb, '  if (ART.rose) return ART.rose;'//NL)
+      call sb_put(sb, '  const R = 52 * k, S = Math.ceil(2 * R + 34 * k), c = document.createElement(''canvas'');'//NL)
+      call sb_put(sb, '  c.width = c.height = S;'//NL)
+      call sb_put(sb, '  const x = c.getContext(''2d''), P = Math.PI, GD = a => `rgba(216,166,87,${a})`;'//NL)
+      call sb_put(sb, '  x.translate(S / 2, S / 2);'//NL)
+      call sb_put(sb, '  const g = x.createRadialGradient(0, 0, 0, 0, 0, 1.3 * R);'//NL)
+      call sb_put(sb, '  g.addColorStop(0, GD(0.11)); g.addColorStop(1, GD(0));'//NL)
+      call sb_put(sb, '  x.fillStyle = g; x.beginPath(); x.arc(0, 0, 1.3 * R, 0, 7); x.fill();'//NL)
+      call sb_put(sb, '  x.strokeStyle = GD(0.6); x.lineWidth = k;'//NL)
+      call sb_put(sb, '  for (const f of [1, 0.88, 0.36]) { x.beginPath(); x.arc(0, 0, f * R, 0, 7); x.stroke(); }'//NL)
+      call sb_put(sb, '  x.lineWidth = 0.7 * k;'//NL)
+      call sb_put(sb, '  for (let i = 0; i < 64; i++) {'//NL)
+      call sb_put(sb, '    const a = i * P / 32, f = i % 8 === 0 ? 0.88 : i % 2 === 0 ? 0.93 : 0.96;'//NL)
+      call sb_put(sb, '    x.beginPath(); x.moveTo(Math.cos(a) * f * R, Math.sin(a) * f * R); x.lineTo(Math.cos(a)')
+      call sb_put(sb, ' * R, Math.sin(a) * R); x.stroke();'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const pt = (a, len, wd) => {'//NL)
+      call sb_put(sb, '    const tx = Math.cos(a) * len, ty = Math.sin(a) * len, lx = Math.cos(a - P / 2) * wd, ly')
+      call sb_put(sb, ' = Math.sin(a - P / 2) * wd;'//NL)
+      call sb_put(sb, '    x.fillStyle = ''rgba(240,207,142,.95)'';'//NL)
+      call sb_put(sb, '    x.beginPath(); x.moveTo(0, 0); x.lineTo(tx, ty); x.lineTo(lx, ly); x.closePath(); x.fil')
+      call sb_put(sb, 'l(); x.stroke();'//NL)
+      call sb_put(sb, '    x.fillStyle = ''rgba(122,88,38,.95)'';'//NL)
+      call sb_put(sb, '    x.beginPath(); x.moveTo(0, 0); x.lineTo(tx, ty); x.lineTo(-lx, -ly); x.closePath(); x.f')
+      call sb_put(sb, 'ill(); x.stroke();'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  x.strokeStyle = ''rgba(11,15,26,.85)''; x.lineWidth = 0.6 * k;'//NL)
+      call sb_put(sb, '  for (let i = 0; i < 4; i++) pt(-P / 4 + i * P / 2, 0.6 * R, 0.1 * R);'//NL)
+      call sb_put(sb, '  for (let i = 0; i < 4; i++) pt(-P / 2 + i * P / 2, 0.98 * R, 0.13 * R);'//NL)
+      call sb_put(sb, '  x.fillStyle = ''#0b0f1a''; x.strokeStyle = GD(0.9); x.lineWidth = k;'//NL)
+      call sb_put(sb, '  x.beginPath(); x.arc(0, 0, 0.07 * R, 0, 7); x.fill(); x.stroke();'//NL)
+      call sb_put(sb, '  x.fillStyle = GD(0.95); x.font = `600 ${Math.round(12 * k)}px ${EDGEF}`; x.textAlign = ''')
+      call sb_put(sb, 'center'';'//NL)
+      call sb_put(sb, '  x.fillText(''N'', 0, -R - 4 * k);'//NL)
+      call sb_put(sb, '  return (ART.rose = c);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// an inscription: spaced capitals in gilt with a cut shadow, between two rules that end in')
+      call sb_put(sb, ' lozenges'//NL)
+      call sb_put(sb, 'function mottoSprite(txt, k) {'//NL)
+      call sb_put(sb, '  if (ART.mot[txt]) return ART.mot[txt];'//NL)
+      call sb_put(sb, '  const c = document.createElement(''canvas''), x = c.getContext(''2d''), fs = 11 * k, sp =')
+      call sb_put(sb, ' 0.3 * fs, ru = 40 * k;'//NL)
+      call sb_put(sb, '  const font = `600 ${fs.toFixed(1)}px ${EDGEF}`, ch = [...txt];'//NL)
+      call sb_put(sb, '  x.font = font;'//NL)
+      call sb_put(sb, '  const ws = ch.map(q => x.measureText(q).width), tw = ws.reduce((a, q) => a + q, 0) + sp *')
+      call sb_put(sb, ' (ch.length - 1);'//NL)
+      call sb_put(sb, '  c.width = Math.ceil(tw + 2 * ru + 12 * k); c.height = Math.ceil(2.4 * fs);'//NL)
+      call sb_put(sb, '  x.font = font; x.textBaseline = ''middle'';'//NL)
+      call sb_put(sb, '  const y = c.height / 2, W = c.width;'//NL)
+      call sb_put(sb, '  let u = ru + 6 * k;'//NL)
+      call sb_put(sb, '  for (let i = 0; i < ch.length; i++) {'//NL)
+      call sb_put(sb, '    x.fillStyle = ''rgba(0,0,0,.8)''; x.fillText(ch[i], u + 0.7 * k, y + 0.8 * k);'//NL)
+      call sb_put(sb, '    x.fillStyle = ''rgba(222,176,98,.84)''; x.fillText(ch[i], u, y);'//NL)
+      call sb_put(sb, '    u += ws[i] + sp;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  x.strokeStyle = ''rgba(216,166,87,.5)''; x.lineWidth = k; x.fillStyle = ''rgba(216,166,87')
+      call sb_put(sb, ',.8)'';'//NL)
+      call sb_put(sb, '  for (const [a, q, z] of [[3 * k, ru - 8 * k, ru - 4 * k], [W - ru + 8 * k, W - 3 * k, W -')
+      call sb_put(sb, ' ru + 4 * k]]) {'//NL)
+      call sb_put(sb, '    x.beginPath(); x.moveTo(a, y); x.lineTo(q, y); x.stroke();'//NL)
+      call sb_put(sb, '    x.beginPath(); x.moveTo(z, y - 3 * k); x.lineTo(z + 3 * k, y); x.lineTo(z, y + 3 * k); ')
+      call sb_put(sb, 'x.lineTo(z - 3 * k, y); x.closePath(); x.fill();'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  return (ART.mot[txt] = c);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a hash of a place on an edge, in [0, 1)'//NL)
+      call sb_put(sb, 'const edgeHash = (i, s) => {'//NL)
+      call sb_put(sb, '  let h = Math.imul(i ^ Math.imul(s, 0x9E3779B1), 0x85EBCA6B);'//NL)
+      call sb_put(sb, '  h ^= h >>> 13; h = Math.imul(h, 0xC2B2AE35);'//NL)
+      call sb_put(sb, '  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;'//NL)
+      call sb_put(sb, '};'//NL)
+      call sb_put(sb, 'let edgeOn = false;'//NL)
+      call sb_put(sb, 'const STILLF = !!(window.matchMedia && matchMedia(''(prefers-reduced-motion: reduce)'').mat')
+      call sb_put(sb, 'ches);   // falls that hold still'//NL)
+      call sb_put(sb, 'function drawEdge(now) {'//NL)
+      call sb_put(sb, '  const c = $(''#edge''), ctx = c.getContext(''2d'');'//NL)
+      call sb_put(sb, '  if (!G.edgeOpen) {'//NL)
+      call sb_put(sb, '    if (edgeOn) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, c.width, c.height')
+      call sb_put(sb, '); edgeOn = false; }'//NL)
+      call sb_put(sb, '    return;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  edgeOn = true;'//NL)
+      call sb_put(sb, '  const k = c.width / G.pw, B = boardRect(), t = document.body.classList.contains(''still''')
+      call sb_put(sb, ') || STILLF ? 12 : now / 1000;'//NL)
+      call sb_put(sb, '  const DF = 84 + 10 * Math.log2(G.z);                   // how far the falls are seen to d')
+      call sb_put(sb, 'rop (CSS px)'//NL)
+      call sb_put(sb, '  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, c.width, c.height);'//NL)
+      call sb_put(sb, '  ctx.setTransform(k, 0, 0, k, 0, 0);'//NL)
+      call sb_put(sb, '  ctx.globalCompositeOperation = ''lighter'';'//NL)
+      call sb_put(sb, '  if (B.l > 0.5) edgeFalls(ctx, t, B.l, -1, B.t, B.b, true, 1, DF);'//NL)
+      call sb_put(sb, '  if (B.r < G.pw - 0.5) edgeFalls(ctx, t, B.r, 1, B.t, B.b, true, 2, DF);'//NL)
+      call sb_put(sb, '  if (B.t > 0.5) edgeFalls(ctx, t, B.t, -1, B.l, B.r, false, 3, DF);'//NL)
+      call sb_put(sb, '  if (B.b < G.ph - 0.5) edgeFalls(ctx, t, B.b, 1, B.l, B.r, false, 4, DF);'//NL)
+      call sb_put(sb, '  ctx.globalCompositeOperation = ''source-over''; ctx.globalAlpha = 1;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// one edge''s falls (e: the edge, o: outward, a0..a1: its length).  Each streak leaves the')
+      call sb_put(sb, ' brink, quickens'//NL)
+      call sb_put(sb, '// and fades, its tail dimmer than its head, and the flow runs heavier and lighter along th')
+      call sb_put(sb, 'e edge; a fine'//NL)
+      call sb_put(sb, '// spray drifts off the lip, and the lip foams.  Every streak belongs to a place on the edg')
+      call sb_put(sb, 'e, so the falls'//NL)
+      call sb_put(sb, '// pan with the world; the strokes go out in a few batches, by brightness.'//NL)
+      call sb_put(sb, 'function edgeFalls(ctx, t, e, o, a0, a1, vert, id, DF) {'//NL)
+      call sb_put(sb, '  const sp = 2.5, NB = 8, lo = Math.max(a0, 0), hi = Math.min(a1, vert ? G.ph : G.pw);'//NL)
+      call sb_put(sb, '  if (hi <= lo) return;'//NL)
+      call sb_put(sb, '  const S = [], Y = [], F = [];'//NL)
+      call sb_put(sb, '  for (let n = 0; n < NB; n++) { S.push(new Path2D()); Y.push(new Path2D()); F.push(new Pat')
+      call sb_put(sb, 'h2D()); }'//NL)
+      call sb_put(sb, '  const out = (p, s, d0, d1) => {'//NL)
+      call sb_put(sb, '    if (vert) { p.moveTo(e + o * d0, s); p.lineTo(e + o * d1, s); } else { p.moveTo(s, e + ')
+      call sb_put(sb, 'o * d0); p.lineTo(s, e + o * d1); }'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  const put = (a, s, d0, d1) => { const n = Math.floor(a * NB); if (n > 0 && d1 > d0) out(S')
+      call sb_put(sb, '[Math.min(n, NB - 1)], s, d0, d1); };'//NL)
+      call sb_put(sb, '  for (let i = Math.ceil((lo - a0) / sp), i1 = Math.floor((hi - a0) / sp); i <= i1; i++) {'//NL)
+      call sb_put(sb, '    const u = i * sp, s0 = a0 + u, flow = 0.62 + 0.38 * Math.sin(u * 0.013 + id * 1.7) * Ma')
+      call sb_put(sb, 'th.sin(u * 0.0051 + t * 0.23 + id);'//NL)
+      call sb_put(sb, '    for (let j = 0; j < 2; j++) {'//NL)
+      call sb_put(sb, '      const q = 2 * i + j, h1 = edgeHash(q, id), h2 = edgeHash(q, id + 8), h3 = edgeHash(q,')
+      call sb_put(sb, ' id + 16);'//NL)
+      call sb_put(sb, '      const p = (t * (0.3 + 0.42 * h2) + h1) % 1, f = DF * Math.pow(p, 1.6), len = 3 + 22 *')
+      call sb_put(sb, ' p, s = s0 + (h3 - 0.5) * sp;'//NL)
+      call sb_put(sb, '      const a = flow * (0.5 + 0.5 * h3) * (1 - p), m1 = Math.max(0, f - 0.6 * len), m2 = Ma')
+      call sb_put(sb, 'th.max(0, f - 0.25 * len);'//NL)
+      call sb_put(sb, '      put(a * 0.3, s, Math.max(0, f - len), m1); put(a * 0.65, s, m1, m2); put(a, s, m2, f)')
+      call sb_put(sb, ';'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '    if (i % 3) continue;'//NL)
+      call sb_put(sb, '    const q = (t * (0.45 + 0.5 * edgeHash(i, id + 24)) + edgeHash(i, id + 32)) % 1;'//NL)
+      call sb_put(sb, '    const n = Math.floor(flow * (1 - q) * Math.min(1, 6 * q) * NB * 0.8), d = 1.5 + 18 * q,')
+      call sb_put(sb, ' s = s0 + 3 * Math.sin(t * 1.7 + i);'//NL)
+      call sb_put(sb, '    if (n > 0) { if (vert) Y[n].rect(e + o * d - 0.8, s - 0.8, 1.6, 1.6); else Y[n].rect(s ')
+      call sb_put(sb, '- 0.8, e + o * d - 0.8, 1.6, 1.6); }'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  // the lip, just outside the edge, takes up the renderer''s foam (#E8F4FA): uneven, fleck')
+      call sb_put(sb, 'ed, on the move'//NL)
+      call sb_put(sb, '  for (let s = lo - (lo - a0) % 4; s < hi; s += 4) {'//NL)
+      call sb_put(sb, '    const u = s - a0, d = 2 + 3 * edgeHash(Math.floor(u / 4), id + 40);'//NL)
+      call sb_put(sb, '    const w = 0.55 + 0.3 * Math.sin(u * 0.083 + t * 2.3) * Math.sin(u * 0.023 - t * 0.9 + i')
+      call sb_put(sb, 'd) + 0.15 * Math.sin(u * 0.31 - t * 4.1);'//NL)
+      call sb_put(sb, '    const n = clamp(Math.floor(w * NB), 1, NB - 1);'//NL)
+      call sb_put(sb, '    if (vert) { F[n].moveTo(e + o, s); F[n].lineTo(e + o, s + 4); } else { F[n].moveTo(s, e')
+      call sb_put(sb, ' + o); F[n].lineTo(s + 4, e + o); }'//NL)
+      call sb_put(sb, '    if (w > 0.78) { if (vert) Y[NB - 1].rect(e + o * d - 0.6, s + 1.4, 1.2, 1.2); else Y[NB')
+      call sb_put(sb, ' - 1].rect(s + 1.4, e + o * d - 0.6, 1.2, 1.2); }'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  // the glow off the lip, the streaks, the spray, and the foam on top, all of the foam''s ')
+      call sb_put(sb, 'own white'//NL)
+      call sb_put(sb, '  ctx.strokeStyle = ''rgb(232,244,250)'';'//NL)
+      call sb_put(sb, '  ctx.beginPath();'//NL)
+      call sb_put(sb, '  if (vert) { ctx.moveTo(e + 5 * o, lo); ctx.lineTo(e + 5 * o, hi); } else { ctx.moveTo(lo,')
+      call sb_put(sb, ' e + 5 * o); ctx.lineTo(hi, e + 5 * o); }'//NL)
+      call sb_put(sb, '  ctx.globalAlpha = 0.08; ctx.lineWidth = 10; ctx.stroke();'//NL)
+      call sb_put(sb, '  ctx.beginPath();'//NL)
+      call sb_put(sb, '  if (vert) { ctx.moveTo(e + 2 * o, lo); ctx.lineTo(e + 2 * o, hi); } else { ctx.moveTo(lo,')
+      call sb_put(sb, ' e + 2 * o); ctx.lineTo(hi, e + 2 * o); }'//NL)
+      call sb_put(sb, '  ctx.globalAlpha = 0.18; ctx.lineWidth = 4; ctx.stroke();'//NL)
+      call sb_put(sb, '  for (let n = 1; n < NB; n++) { ctx.globalAlpha = n / NB; ctx.lineWidth = n > 4 ? 1.7 : 1.')
+      call sb_put(sb, '2; ctx.stroke(S[n]); }'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''rgb(232,244,250)'';'//NL)
+      call sb_put(sb, '  for (let n = 1; n < NB; n++) { ctx.globalAlpha = n / NB; ctx.fill(Y[n]); }'//NL)
+      call sb_put(sb, '  ctx.lineWidth = 1.4;'//NL)
+      call sb_put(sb, '  for (let n = 1; n < NB; n++) { ctx.globalAlpha = 0.75 * n / NB; ctx.stroke(F[n]); }'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the window a frame is asked for: the view''s, held inside the board.  The server keeps t')
+      call sb_put(sb, 'he same pan'//NL)
+      call sb_put(sb, '// limit and would answer for any view, beyond the edge in clear; but a window inside the b')
+      call sb_put(sb, 'oard holds'//NL)
+      call sb_put(sb, '// every cell the view can show, so at the whole-world zoom one frame serves every pan.'//NL)
+      call sb_put(sb, 'const frameWin = () => {'//NL)
+      call sb_put(sb, '  const ax = Math.floor(G.nx / (2 * G.z)), ay = Math.floor(G.ny / (2 * G.z)), c = viewClamp')
+      call sb_put(sb, '(G.cx, G.cy, G.z);'//NL)
+      call sb_put(sb, '  return { z: G.z, cx: clamp(c[0], ax, G.nx - ax), cy: clamp(c[1], ay, G.ny - ay) };'//NL)
+      call sb_put(sb, '};'//NL)
+      call sb_put(sb, 'const frameURL = () => { const w = frameWin(); return `/frame?v=${G.view}&z=${w.z}&cx=${w.c')
+      call sb_put(sb, 'x}&cy=${w.cy}&hl=${G.hl}`; };'//NL)
       call sb_put(sb, 'async function frameLoop() {'//NL)
       call sb_put(sb, '  let lastKey = '''', lastTick = -1;'//NL)
       call sb_put(sb, '  for (;;) {'//NL)
@@ -24504,13 +25924,18 @@ contains
       call sb_put(sb, '    if (document.hidden) { await sleep(400); continue; }'//NL)
       call sb_put(sb, '    if (G.paused && key === lastKey && G.tick === lastTick && !G.kick) { await sleep(150); ')
       call sb_put(sb, 'continue; }'//NL)
+      call sb_put(sb, '    const kick = G.kick;'//NL)
       call sb_put(sb, '    G.kick = false;'//NL)
       call sb_put(sb, '    try {'//NL)
-      call sb_put(sb, '      const w = { z: G.z, cx: G.cx, cy: G.cy };'//NL)
-      call sb_put(sb, '      const r = await fetch(key, { cache: ''no-store'' });'//NL)
+      call sb_put(sb, '      const w = frameWin();'//NL)
+      call sb_put(sb, '      // holding this very frame: ask only for news (an empty answer means nothing has chan')
+      call sb_put(sb, 'ged)'//NL)
+      call sb_put(sb, '      const have = key === G.fkey && G.fver >= 0 && !kick ? `&have=${G.fver}` : '''';'//NL)
+      call sb_put(sb, '      const r = await fetch(key + have, { cache: ''no-store'' });'//NL)
       call sb_put(sb, '      if (!r.ok) throw new Error(''frame '' + r.status);'//NL)
       call sb_put(sb, '      const f = parseRLF(await r.arrayBuffer());'//NL)
-      call sb_put(sb, '      if (f) { takeFrame(f, w); lastKey = key; lastTick = f.tick; }'//NL)
+      call sb_put(sb, '      if (f) { takeFrame(f, w); G.fkey = key; G.fver = f.ver; lastTick = f.tick; }'//NL)
+      call sb_put(sb, '      if (G.fkey === key) lastKey = key;'//NL)
       call sb_put(sb, '      setOnline(true);'//NL)
       call sb_put(sb, '    } catch (e) {'//NL)
       call sb_put(sb, '      setOnline(false);'//NL)
@@ -24552,9 +25977,12 @@ contains
       call sb_put(sb, '    occ.push([x - 4, y - 2, x + ww + 4, y + hh + 2]);'//NL)
       call sb_put(sb, '    return true;'//NL)
       call sb_put(sb, '  };'//NL)
-      call sb_put(sb, '  const put = (e, x, y, anchor, op) => {'//NL)
+      call sb_put(sb, '  const B = boardRect(w), put = (e, x, y, anchor, op) => {'//NL)
       call sb_put(sb, '    if (!e._w) { e._w = e.offsetWidth; e._hh = e.offsetHeight; }'//NL)
-      call sb_put(sb, '    const lx = anchor === ''c'' ? x - e._w / 2 : x, ly = y - e._hh / 2;'//NL)
+      call sb_put(sb, '    // a name keeps to the world: by an edge it slides inward rather than hang over the fal')
+      call sb_put(sb, 'ls'//NL)
+      call sb_put(sb, '    const lx = clamp(anchor === ''c'' ? x - e._w / 2 : x, B.l + 3, B.r - 3 - e._w), ly = cl')
+      call sb_put(sb, 'amp(y - e._hh / 2, B.t + 3, B.b - 3 - e._hh);'//NL)
       call sb_put(sb, '    if (lx < 2 || ly < 2 || lx + e._w > G.pw - 2 || ly + e._hh > G.ph - 2 || !fits(lx, ly, ')
       call sb_put(sb, 'e._w, e._hh)) {'//NL)
       call sb_put(sb, '      e.style.opacity = 0; return false;'//NL)
@@ -24667,6 +26095,7 @@ contains
       call sb_put(sb, 'ner''s place'//NL)
       call sb_put(sb, '  drawSociety(ctx, now, w);'//NL)
       call sb_put(sb, '  drawEvents(ctx, now, w);'//NL)
+      call sb_put(sb, '  newsTick(now);'//NL)
       call sb_put(sb, '  // the Hand''s touches ripple out'//NL)
       call sb_put(sb, '  G.ripples = G.ripples.filter(r => now - r.t < 1400);'//NL)
       call sb_put(sb, '  for (const r of G.ripples) {'//NL)
@@ -24712,12 +26141,14 @@ contains
       call sb_put(sb, 'function animLoop(now) {'//NL)
       call sb_put(sb, '  const dt = Math.min(200, now - (lastNow || now));'//NL)
       call sb_put(sb, '  lastNow = now;'//NL)
+      call sb_put(sb, '  viewGlide(now);'//NL)
       call sb_put(sb, '  if (G.dirty) { G.dirty = false; drawMap(); }'//NL)
       call sb_put(sb, '  const key = `${G.cx},${G.cy},${G.z},${G.pw},${G.view},${G.labKey || ''''},${ovKey()},${fo')
       call sb_put(sb, 'cusOf()},${G.purist}`;'//NL)
       call sb_put(sb, '  if (key !== G.placeKey) { G.placeKey = key; placeLabels(); graticule(); }'//NL)
       call sb_put(sb, '  drawPeopleLabels(dt);'//NL)
       call sb_put(sb, '  drawOverlay(now);'//NL)
+      call sb_put(sb, '  artSafe(drawEdge, now);'//NL)
       call sb_put(sb, '  requestAnimationFrame(animLoop);'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
@@ -24848,8 +26279,7 @@ contains
       call sb_put(sb, '  if (d && Math.abs(d.x - x) + Math.abs(d.y - y) < 4 && d.region) return d.region;'//NL)
       call sb_put(sb, '  let best = null, bd = 1e9;'//NL)
       call sb_put(sb, '  for (const r of G.regions) {'//NL)
-      call sb_put(sb, '    const dx = Math.abs(mod(r.x - x + G.nx / 2, G.nx) - G.nx / 2), dy = Math.abs(mod(r.y - ')
-      call sb_put(sb, 'y + G.ny / 2, G.ny) - G.ny / 2);'//NL)
+      call sb_put(sb, '    const dx = Math.abs(r.x - x), dy = Math.abs(r.y - y);'//NL)
       call sb_put(sb, '    if (dx * dx + dy * dy < bd) { bd = dx * dx + dy * dy; best = r; }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  return best ? best.name : `${x}, ${y}`;'//NL)
@@ -24880,33 +26310,88 @@ contains
       call sb_put(sb, '  if (z2 === G.z) return;'//NL)
       call sb_put(sb, '  const w = win(), u = sx / G.pw, vv = sy / G.ph;'//NL)
       call sb_put(sb, '  const X = w.i0 - 1 + u * w.wx, Y = w.j0 - vv * w.wy;'//NL)
-      call sb_put(sb, '  G.cx = wrap1(X - u * G.nx / z2 + G.nx / (2 * z2), G.nx);'//NL)
-      call sb_put(sb, '  G.cy = wrap1(Y + vv * G.ny / z2 - G.ny / (2 * z2), G.ny);'//NL)
-      call sb_put(sb, '  G.z = z2; G.kick = true; G.fwin = null; G.dirty = true;'//NL)
+      call sb_put(sb, '  [G.cx, G.cy] = viewClamp(X - u * G.nx / z2 + G.nx / (2 * z2), Y + vv * G.ny / z2 - G.ny /')
+      call sb_put(sb, ' (2 * z2), z2);'//NL)
+      call sb_put(sb, '  G.z = z2; G.glide = null; G.kick = true; G.dirty = true;'//NL)
       call sb_put(sb, '  updateZoomTag();'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the view glides: back inside the pan limit when let go beyond it, or over to a place bei')
+      call sb_put(sb, 'ng shown;'//NL)
+      call sb_put(sb, '// a ''bump'' goes a little way and comes back, the world''s nod that it will go no further'//NL)
+      call sb_put(sb, 'function glideTo(cx, cy, ms, bump) {'//NL)
+      call sb_put(sb, '  G.glide = { x0: G.cx, y0: G.cy, x1: cx, y1: cy, t0: performance.now(), ms: ms || 360, bum')
+      call sb_put(sb, 'p: !!bump };'//NL)
+      call sb_put(sb, '  G.kick = true;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function viewGlide(now) {'//NL)
+      call sb_put(sb, '  const g = G.glide;'//NL)
+      call sb_put(sb, '  if (!g) return;'//NL)
+      call sb_put(sb, '  const k = clamp((now - g.t0) / g.ms, 0, 1), e = g.bump ? Math.sin(Math.PI * k) : 1 - Math')
+      call sb_put(sb, '.pow(1 - k, 3);'//NL)
+      call sb_put(sb, '  G.cx = lerp(g.x0, g.x1, e); G.cy = lerp(g.y0, g.y1, e);'//NL)
+      call sb_put(sb, '  if (k >= 1) { G.cx = g.bump ? g.x0 : g.x1; G.cy = g.bump ? g.y0 : g.y1; G.glide = null; u')
+      call sb_put(sb, 'pdateZoomTag(); }'//NL)
+      call sb_put(sb, '  G.dirty = true;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function endGlide() {                             // a hand on the map ends a glide where i')
+      call sb_put(sb, 't was going'//NL)
+      call sb_put(sb, '  const g = G.glide;'//NL)
+      call sb_put(sb, '  if (!g) return;'//NL)
+      call sb_put(sb, '  G.cx = g.bump ? g.x0 : g.x1; G.cy = g.bump ? g.y0 : g.y1; G.glide = null; G.dirty = true;'//NL)
+      call sb_put(sb, '  updateZoomTag();'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a drag past the pan limit gives a little, ever more stiffly, and springs back when let g')
+      call sb_put(sb, 'o'//NL)
+      call sb_put(sb, 'function softView(rx, ry) {'//NL)
+      call sb_put(sb, '  const L = viewLim(), E = Math.max(2, 0.035 * G.nx / G.z);'//NL)
+      call sb_put(sb, '  const soft = (v, a, b) => v < a ? a - E * Math.tanh((a - v) / E) : v > b ? b + E * Math.t')
+      call sb_put(sb, 'anh((v - b) / E) : Math.round(v);'//NL)
+      call sb_put(sb, '  return [soft(rx, L[0], L[1]), soft(ry, L[2], L[3])];'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function panTo(x, y, z) {'//NL)
       call sb_put(sb, '  if (!x && !y) return;'//NL)
-      call sb_put(sb, '  if (z) G.z = z;'//NL)
-      call sb_put(sb, '  G.cx = wrap1(x, G.nx); G.cy = wrap1(y, G.ny);'//NL)
+      call sb_put(sb, '  const c = viewClamp(x, y, z || G.z);'//NL)
+      call sb_put(sb, '  if (z && z !== G.z) { G.z = z; G.cx = c[0]; G.cy = c[1]; G.glide = null; }'//NL)
+      call sb_put(sb, '  else glideTo(c[0], c[1], 480);'//NL)
       call sb_put(sb, '  G.kick = true; G.dirty = true;'//NL)
       call sb_put(sb, '  G.ripples.push({ x, y, r: 3, t: performance.now() });'//NL)
       call sb_put(sb, '  updateZoomTag();'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function goHome() {                               // the whole world, as it was first laid ')
       call sb_put(sb, 'out'//NL)
-      call sb_put(sb, '  const hm = G.home || [Math.floor(G.nx / 2), Math.floor(G.ny / 2)];'//NL)
-      call sb_put(sb, '  G.z = 1; G.cx = hm[0]; G.cy = hm[1];'//NL)
-      call sb_put(sb, '  G.kick = true; G.fwin = null; G.dirty = true;'//NL)
+      call sb_put(sb, '  const hm = G.home || [Math.floor(G.nx / 2), Math.floor(G.ny / 2)], c = viewClamp(hm[0], h')
+      call sb_put(sb, 'm[1], 1);'//NL)
+      call sb_put(sb, '  if (G.z === 1) glideTo(c[0], c[1], 420);'//NL)
+      call sb_put(sb, '  else { G.z = 1; G.cx = c[0]; G.cy = c[1]; G.glide = null; }'//NL)
+      call sb_put(sb, '  G.kick = true; G.dirty = true;'//NL)
       call sb_put(sb, '  updateZoomTag();'//NL)
       call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the arrow keys walk the map, an eighth of the window at a press'//NL)
+      call sb_put(sb, 'function panKey(ev) {'//NL)
+      call sb_put(sb, '  const dx = ev.key === ''ArrowLeft'' ? -1 : ev.key === ''ArrowRight'' ? 1 : 0, dy = ev.key')
+      call sb_put(sb, ' === ''ArrowUp'' ? 1 : ev.key === ''ArrowDown'' ? -1 : 0;'//NL)
+      call sb_put(sb, '  if ((!dx && !dy) || ev.ctrlKey || ev.metaKey || ev.altKey || G.dlg) return;'//NL)
+      call sb_put(sb, '  if (ev.target.closest && ev.target.closest(''input, textarea, select, #side, #drawer, #la')
+      call sb_put(sb, 'ws'')) return;   // those scroll'//NL)
+      call sb_put(sb, '  const g = G.glide && !G.glide.bump ? G.glide : null, x = g ? g.x1 : G.cx, y = g ? g.y1 : ')
+      call sb_put(sb, 'G.cy;'//NL)
+      call sb_put(sb, '  const st = Math.max(2, Math.round(G.nx / G.z / 8)), c = viewClamp(x + dx * st, y + dy * s')
+      call sb_put(sb, 't, G.z);'//NL)
+      call sb_put(sb, '  if (c[0] !== Math.round(x) || c[1] !== Math.round(y)) glideTo(c[0], c[1], 240);'//NL)
+      call sb_put(sb, '  else if (!G.glide) glideTo(x + dx * 0.012 * G.nx / G.z, y + dy * 0.012 * G.nx / G.z, 280,')
+      call sb_put(sb, ' true);'//NL)
+      call sb_put(sb, '  ev.preventDefault();'//NL)
+      call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function updateZoomTag() {'//NL)
-      call sb_put(sb, '  const hm = G.home || [Math.floor(G.nx / 2), Math.floor(G.ny / 2)], turned = G.cx !== hm[0')
-      call sb_put(sb, '] || G.cy !== hm[1];'//NL)
+      call sb_put(sb, '  const hm = G.home || [Math.floor(G.nx / 2), Math.floor(G.ny / 2)], cx = Math.round(G.cx),')
+      call sb_put(sb, ' cy = Math.round(G.cy), w = win();'//NL)
       call sb_put(sb, '  const back = '' · <button class="lk" id="ztx">set the map straight</button>'';'//NL)
-      call sb_put(sb, '  $(''#zoomtag'').innerHTML = G.z === 1 ? (turned ? ''the map is turned round its doughnut')
-      call sb_put(sb, ''' + back : '''') :'//NL)
-      call sb_put(sb, '    `×${G.z} · centred on ${G.cx}, ${G.cy} · wheel out to see the whole world` + back;'//NL)
+      call sb_put(sb, '  const brink = w.i0 < 1 || w.j0 > G.ny || w.i0 + w.wx > G.nx + 1 || w.j0 - w.wy < 0;'//NL)
+      call sb_put(sb, '  $(''#zoomtag'').innerHTML = G.z === 1 ? (cx !== hm[0] || cy !== hm[1] ? ''you look over t')
+      call sb_put(sb, 'he edge of the world'' + back : '''') :'//NL)
+      call sb_put(sb, '    `×${G.z} · centred on ${cx}, ${cy}${brink ? '' · at the edge of the world'' : ''''} ')
+      call sb_put(sb, '· drag or arrow keys to travel` +'//NL)
+      call sb_put(sb, '    '' · wheel out for the whole world'' + back;'//NL)
       call sb_put(sb, '  const cp = cellPx(), cells = G.z === 1 ? 64 : G.z === 2 ? 32 : 16;'//NL)
       call sb_put(sb, '  $(''#sbar'').style.width = Math.round(cells * cp) + ''px'';'//NL)
       call sb_put(sb, '  $(''#stx'').textContent = cells + '' cells'';'//NL)
@@ -24918,18 +26403,26 @@ contains
       call sb_put(sb, '  const pos = ev => { const r = pl.getBoundingClientRect(); return [ev.clientX - r.left, ev')
       call sb_put(sb, '.clientY - r.top]; };'//NL)
       call sb_put(sb, '  pl.addEventListener(''mousemove'', ev => {'//NL)
-      call sb_put(sb, '    const [sx, sy] = pos(ev), d = G.drag;'//NL)
-      call sb_put(sb, '    const [x, y] = s2c(sx, sy);'//NL)
-      call sb_put(sb, '    G.hover = { sx, sy, x, y };'//NL)
+      call sb_put(sb, '    const [sx, sy] = pos(ev), d = G.drag, c = s2c(sx, sy);'//NL)
+      call sb_put(sb, '    // beyond the edge there is no cell: no hand-light there, nothing to read and nothing t')
+      call sb_put(sb, 'o touch'//NL)
+      call sb_put(sb, '    G.hover = c ? { sx, sy, x: c[0], y: c[1] } : null;'//NL)
+      call sb_put(sb, '    pl.classList.toggle(''void'', !c);'//NL)
       call sb_put(sb, '    if (d) {'//NL)
       call sb_put(sb, '      d.ex = sx; d.ey = sy;'//NL)
       call sb_put(sb, '      if (!d.moved && Math.hypot(sx - d.sx, sy - d.sy) > 5) { d.moved = true; $(''#tip'').c')
       call sb_put(sb, 'lassList.remove(''on''); }'//NL)
       call sb_put(sb, '      if (d.moved && G.tool !== ''wind'') {'//NL)
       call sb_put(sb, '        const cp = cellPx();'//NL)
-      call sb_put(sb, '        G.cx = wrap1(d.cx - (sx - d.sx) / cp, G.nx); G.cy = wrap1(d.cy + (sy - d.sy) / cp, ')
-      call sb_put(sb, 'G.ny);'//NL)
+      call sb_put(sb, '        [G.cx, G.cy] = softView(d.cx - (sx - d.sx) / cp, d.cy + (sy - d.sy) / cp);'//NL)
       call sb_put(sb, '        pl.classList.add(''dragging''); G.dirty = true; updateZoomTag();'//NL)
+      call sb_put(sb, '      }'//NL)
+      call sb_put(sb, '      return;'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '    if (!c) {'//NL)
+      call sb_put(sb, '      if (G.hoverHit || G.hoverRealm || $(''#tip'').classList.contains(''on'')) {'//NL)
+      call sb_put(sb, '        G.hoverHit = null; inspCell = ''''; setHoverRealm(0); $(''#tip'').classList.remove(')
+      call sb_put(sb, '''on'');'//NL)
       call sb_put(sb, '      }'//NL)
       call sb_put(sb, '      return;'//NL)
       call sb_put(sb, '    }'//NL)
@@ -24945,6 +26438,7 @@ contains
       call sb_put(sb, '  pl.addEventListener(''mousedown'', ev => {'//NL)
       call sb_put(sb, '    if (ev.button !== 0) return;'//NL)
       call sb_put(sb, '    const [sx, sy] = pos(ev);'//NL)
+      call sb_put(sb, '    endGlide();'//NL)
       call sb_put(sb, '    G.drag = { sx, sy, ex: sx, ey: sy, cx: G.cx, cy: G.cy, moved: false };'//NL)
       call sb_put(sb, '    ev.preventDefault();'//NL)
       call sb_put(sb, '  });'//NL)
@@ -24952,10 +26446,18 @@ contains
       call sb_put(sb, '    const d = G.drag;'//NL)
       call sb_put(sb, '    if (!d) return;'//NL)
       call sb_put(sb, '    G.drag = null; pl.classList.remove(''dragging'');'//NL)
+      call sb_put(sb, '    if (d.moved && G.tool !== ''wind'') {             // let go beyond the limit: the world')
+      call sb_put(sb, ' drifts back'//NL)
+      call sb_put(sb, '      const lim = viewClamp(G.cx, G.cy, G.z);'//NL)
+      call sb_put(sb, '      if (lim[0] !== G.cx || lim[1] !== G.cy) glideTo(lim[0], lim[1], 300);'//NL)
+      call sb_put(sb, '    }'//NL)
       call sb_put(sb, '    if (ev.target.closest && !ev.target.closest(''#plate'') && !d.moved) return;'//NL)
-      call sb_put(sb, '    const [x, y] = s2c(d.sx, d.sy);'//NL)
-      call sb_put(sb, '    if (!d.moved) applyTool(x, y);'//NL)
-      call sb_put(sb, '    else if (G.tool === ''wind'') applyTool(x, y, Math.atan2(-(d.ey - d.sy), d.ex - d.sx));'//NL)
+      call sb_put(sb, '    const at = s2c(d.sx, d.sy);'//NL)
+      call sb_put(sb, '    if (!at) { if (!d.moved) toast(''<b>Hic finis mundi</b> · Beyond the edge there is not')
+      call sb_put(sb, 'hing to touch.'', 1800); return; }'//NL)
+      call sb_put(sb, '    if (!d.moved) applyTool(at[0], at[1]);'//NL)
+      call sb_put(sb, '    else if (G.tool === ''wind'') applyTool(at[0], at[1], Math.atan2(-(d.ey - d.sy), d.ex -')
+      call sb_put(sb, ' d.sx));'//NL)
       call sb_put(sb, '  });'//NL)
       call sb_put(sb, '  pl.addEventListener(''mouseleave'', () => { G.hover = null; G.hoverHit = null; setHoverRe')
       call sb_put(sb, 'alm(0); $(''#tip'').classList.remove(''on''); });'//NL)
@@ -24976,12 +26478,13 @@ contains
       call sb_put(sb, 'leave'//NL)
       call sb_put(sb, '// out degrades quietly: no centre, the capital; no area, the regions; no front, the thread')
       call sb_put(sb, '''s middle.'//NL)
-      call sb_put(sb, 'const OV = { realms: true, trade: true, wars: true, faiths: true, weather: false, night: fa')
-      call sb_put(sb, 'lse };'//NL)
-      call sb_put(sb, 'const OVK = [''realms'', ''trade'', ''wars'', ''faiths'', ''weather'', ''night''];'//NL)
+      call sb_put(sb, 'const OV = { realms: true, trade: true, wars: true, borders: true, faiths: true, weather: f')
+      call sb_put(sb, 'alse, night: false };'//NL)
+      call sb_put(sb, 'const OVK = [''realms'', ''trade'', ''wars'', ''borders'', ''faiths'', ''weather'', ''night')
+      call sb_put(sb, '''];'//NL)
       call sb_put(sb, 'try {'//NL)
       call sb_put(sb, '  const s = JSON.parse(localStorage.getItem(''rl.ov'') || ''null'');'//NL)
-      call sb_put(sb, '  if (s) for (const k of OVK.slice(0, 4)) if (typeof s[k] === ''boolean'') OV[k] = s[k];'//NL)
+      call sb_put(sb, '  if (s) for (const k of OVK.slice(0, 5)) if (typeof s[k] === ''boolean'') OV[k] = s[k];'//NL)
       call sb_put(sb, '} catch (e) { /* no storage */ }'//NL)
       call sb_put(sb, 'for (const k of OVK) if (Q.has(k)) OV[k] = Q.get(k) !== ''0'';'//NL)
       call sb_put(sb, 'const ovKey = () => OVK.map(k => OV[k] ? 1 : 0).join('''');'//NL)
@@ -24990,6 +26493,7 @@ contains
       call sb_put(sb, 'const showTrade = () => socOn() && (OV.trade || G.view === 13);'//NL)
       call sb_put(sb, 'const showWars = () => socOn() && (OV.wars || G.view === 11);'//NL)
       call sb_put(sb, 'const showFaiths = () => socOn() && (OV.faiths || G.view === 12);'//NL)
+      call sb_put(sb, 'const showBorders = () => socOn() && (OV.borders || G.view === 11);'//NL)
       call sb_put(sb, 'const SERIF = ''Palatino, "Palatino Linotype", "P052", "URW Palladio L", "TeX Gyre Pagella"')
       call sb_put(sb, ', Georgia, serif'';'//NL)
       call sb_put(sb, NL)
@@ -25208,34 +26712,72 @@ contains
       call sb_put(sb, 'on: t.on }); }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  s._emb = E;'//NL)
+      call sb_put(sb, '  enrichDiplo(s);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the borders and truces of the realms, and what has changed since the last look: since wh')
+      call sb_put(sb, 'en each'//NL)
+      call sb_put(sb, '// pair has stood as it stands (known only for the changes seen from here), and the battles')
+      call sb_put(sb, ' fought'//NL)
+      call sb_put(sb, 'const DIP = { since: new Map(), last: new Map(), hit: new Map(), seen: false };'//NL)
+      call sb_put(sb, 'const RW = { war: 6, truce: 5, tense: 4, ally: 3, pact: 2, peace: 0 };'//NL)
+      call sb_put(sb, 'function enrichDiplo(s) {'//NL)
+      call sb_put(sb, '  const yr = (G.st && G.st.year) || 0, now = performance.now();'//NL)
+      call sb_put(sb, '  s._wmap = new Map((s.wars || []).map(w => [pair(w.a, w.b), w]));'//NL)
+      call sb_put(sb, '  s._tmap = new Map((s.truces || []).map(t => [pair(t.a, t.b), t]));'//NL)
+      call sb_put(sb, '  s._bmap = new Map();'//NL)
+      call sb_put(sb, '  const B = (s.borders || []).filter(b => s.rmap.has(b.a) && s.rmap.has(b.b) && (b.x || b.y')
+      call sb_put(sb, '));'//NL)
+      call sb_put(sb, '  for (const b of B) { b.w = s._wmap.get(pair(b.a, b.b)) || null; s._bmap.set(pair(b.a, b.b')
+      call sb_put(sb, '), b); }'//NL)
+      call sb_put(sb, '  s._bord = B.sort((p, q) => (RW[q.st] || 0) - (RW[p.st] || 0) || (q.len || 0) - (p.len || ')
+      call sb_put(sb, '0));'//NL)
+      call sb_put(sb, '  for (const m of s.realms) m._pact = new Set();'//NL)
+      call sb_put(sb, '  for (const p of s.pacts || []) {'//NL)
+      call sb_put(sb, '    const A = s.rmap.get(p[0]), C = s.rmap.get(p[1]);'//NL)
+      call sb_put(sb, '    if (A && A._pact) A._pact.add(p[1]);'//NL)
+      call sb_put(sb, '    if (C && C._pact) C._pact.add(p[0]);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const keep = new Set();'//NL)
+      call sb_put(sb, '  for (const b of B) {'//NL)
+      call sb_put(sb, '    const k = pair(b.a, b.b), o = DIP.since.get(k);'//NL)
+      call sb_put(sb, '    keep.add(k);'//NL)
+      call sb_put(sb, '    if (!o || o.st !== b.st) DIP.since.set(k, { st: b.st, y: o || DIP.seen ? yr : null });'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  for (const k of [...DIP.since.keys()]) if (!keep.has(k)) DIP.since.delete(k);'//NL)
+      call sb_put(sb, '  DIP.seen = true;'//NL)
+      call sb_put(sb, '  // a battle fought since the last look rings out at its front, and its badge flares'//NL)
+      call sb_put(sb, '  const wk = new Set();'//NL)
+      call sb_put(sb, '  for (const w of s.wars || []) {'//NL)
+      call sb_put(sb, '    const k = pair(w.a, w.b) + ''@'' + Math.floor(w.since || 0), o = DIP.last.get(k);'//NL)
+      call sb_put(sb, '    const L = w.last != null && w.last >= 0 && (w.battles | 0) > 0 ? +w.last : null;'//NL)
+      call sb_put(sb, '    wk.add(k);'//NL)
+      call sb_put(sb, '    if (o != null && L != null && L > o + 1e-6) {'//NL)
+      call sb_put(sb, '      DIP.hit.set(k, now);'//NL)
+      call sb_put(sb, '      if ((w.x || w.y) && NEWS.lvl !== ''quiet'' && pace() < 2 && showWars()) battleSeen({ ')
+      call sb_put(sb, 'x: w.x, y: w.y, n: w.lastSlain }, now);'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '    if (L != null) DIP.last.set(k, L);'//NL)
+      call sb_put(sb, '    w._hit = DIP.hit.get(k) || 0;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  for (const M of [DIP.last, DIP.hit]) for (const k of [...M.keys()]) if (!wk.has(k)) M.del')
+      call sb_put(sb, 'ete(k);'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
-      call sb_put(sb, '// ===================================================================== the torus, made fl')
-      call sb_put(sb, 'at'//NL)
-      call sb_put(sb, 'const wrapD = (d, n) => mod(d + n / 2, n) - n / 2;            // the shortest way round'//NL)
-      call sb_put(sb, 'function c2u(x, y, w) {                                       // like c2s, but the copy nea')
-      call sb_put(sb, 'rest the window'//NL)
+      call sb_put(sb, '// ===================================================================== threads on a flat ')
+      call sb_put(sb, 'world'//NL)
+      call sb_put(sb, 'const wrapD = (d, n) => d;                                    // no way round: the world ha')
+      call sb_put(sb, 's edges'//NL)
+      call sb_put(sb, 'function c2u(x, y, w) {                                       // like c2s, but anywhere, of')
+      call sb_put(sb, 'f the plate too'//NL)
       call sb_put(sb, '  w = w || win();'//NL)
-      call sb_put(sb, '  const cw = G.pw / w.wx, ch = G.ph / w.wy;'//NL)
-      call sb_put(sb, '  let dx = mod(x - w.i0, G.nx), dy = mod(w.j0 - y, G.ny);'//NL)
-      call sb_put(sb, '  if (dx > w.wx / 2 + G.nx / 2) dx -= G.nx;'//NL)
-      call sb_put(sb, '  if (dy > w.wy / 2 + G.ny / 2) dy -= G.ny;'//NL)
-      call sb_put(sb, '  return [(dx + 0.5) * cw, (dy + 0.5) * ch];'//NL)
+      call sb_put(sb, '  return [(x - w.i0 + 0.5) * G.pw / w.wx, (w.j0 - y + 0.5) * G.ph / w.wy];'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function copies(bb, w) {                                      // where a shape shows, as th')
-      call sb_put(sb, 'e world wraps'//NL)
-      call sb_put(sb, '  w = w || win();'//NL)
-      call sb_put(sb, '  const PX = G.nx * G.pw / w.wx, PY = G.ny * G.ph / w.wy, out = [];'//NL)
-      call sb_put(sb, '  for (const ky of [0, -1, 1]) for (const kx of [0, -1, 1]) {'//NL)
-      call sb_put(sb, '    const ox = kx * PX, oy = ky * PY;'//NL)
-      call sb_put(sb, '    if (bb[2] + ox < -16 || bb[0] + ox > G.pw + 16 || bb[3] + oy < -16 || bb[1] + oy > G.ph')
-      call sb_put(sb, ' + 16) continue;'//NL)
-      call sb_put(sb, '    out.push([ox, oy]);'//NL)
-      call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  return out;'//NL)
+      call sb_put(sb, 'function copies(bb, w) {                                      // a shape shows once, if it ')
+      call sb_put(sb, 'meets the plate'//NL)
+      call sb_put(sb, '  return bb[2] < -16 || bb[0] > G.pw + 16 || bb[3] < -16 || bb[1] > G.ph + 16 ? [] : [[0, 0')
+      call sb_put(sb, ']];'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'const shortD = (a, b, cw, ch) => [wrapD(b.x - a.x, G.nx) * cw, -wrapD(b.y - a.y, G.ny) * ch')
-      call sb_put(sb, '];'//NL)
+      call sb_put(sb, 'const shortD = (a, b, cw, ch) => [(b.x - a.x) * cw, -(b.y - a.y) * ch];'//NL)
       call sb_put(sb, 'function quad(P, D, bulge) {'//NL)
       call sb_put(sb, '  const L = Math.hypot(D[0], D[1]) || 1, ux = -D[1] / L, uy = D[0] / L;'//NL)
       call sb_put(sb, '  const Q2 = [P[0] + D[0], P[1] + D[1]], C = [P[0] + D[0] / 2 + ux * L * bulge, P[1] + D[1]')
@@ -25253,9 +26795,9 @@ contains
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function qPoly(g, ox, oy, n) { const o = []; for (let k = 0; k <= n; k++) { const p = qAt(g')
       call sb_put(sb, ', k / n); o.push([p[0] + ox, p[1] + oy]); } return o; }'//NL)
-      call sb_put(sb, '// where a thread leaves the plate it says where it goes: the map is a torus, and it comes ')
-      call sb_put(sb, 'back in'//NL)
-      call sb_put(sb, '// on the opposite edge.  ''a'' is inside the plate and ''b'' outside.'//NL)
+      call sb_put(sb, '// where a thread leaves the plate it says where it goes: its far end lies off the plate th')
+      call sb_put(sb, 'at way.'//NL)
+      call sb_put(sb, '// ''a'' is inside the plate and ''b'' outside.'//NL)
       call sb_put(sb, 'const inPlate = p => p[0] >= 0 && p[0] <= G.pw && p[1] >= 0 && p[1] <= G.ph;'//NL)
       call sb_put(sb, 'function exitPoint(a, b) {'//NL)
       call sb_put(sb, '  const dx = b[0] - a[0], dy = b[1] - a[1];'//NL)
@@ -25391,6 +26933,8 @@ contains
       call sb_put(sb, '  ctx.lineCap = ''round''; ctx.lineJoin = ''round'';'//NL)
       call sb_put(sb, '  if (showTrade()) drawTrade(ctx, now, w, cw, ch, fo);'//NL)
       call sb_put(sb, '  if (showFaiths()) drawFaiths(ctx, now, w);'//NL)
+      call sb_put(sb, '  if (fo && showBorders()) drawTies(ctx, w, cw, ch, fo);'//NL)
+      call sb_put(sb, '  if (showBorders()) drawBorders(ctx, now, w, fo);'//NL)
       call sb_put(sb, '  if (showWars()) drawWars(ctx, now, w, cw, ch, fo);'//NL)
       call sb_put(sb, '  ctx.restore();'//NL)
       call sb_put(sb, '  ctx.globalAlpha = 1;'//NL)
@@ -25435,8 +26979,8 @@ contains
       call sb_put(sb, '      }'//NL)
       call sb_put(sb, '      const poly = qPoly(g, ox, oy, 18);'//NL)
       call sb_put(sb, '      G.hits.push({ type: ''flow'', f: a.f, poly });'//NL)
-      call sb_put(sb, '      if (fo && fade === 1) edgeTags(ctx, poly, (rOf(a.f.from) || {}).name, (rOf(a.f.to) ||')
-      call sb_put(sb, ' {}).name, GL[gi], 0.95);'//NL)
+      call sb_put(sb, '      if (fo && fade === 1 && typeof edgeTags === ''function'') edgeTags(ctx, poly, (rOf(a.')
+      call sb_put(sb, 'f.from) || {}).name, (rOf(a.f.to) || {}).name, GL[gi], 0.95);'//NL)
       call sb_put(sb, '    }'//NL)
       call sb_put(sb, '  });'//NL)
       call sb_put(sb, '  for (const e of s._emb || []) {'//NL)
@@ -25461,67 +27005,207 @@ contains
       call sb_put(sb, '    }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function warBadge(ctx, x, y, holy, t, a) {'//NL)
-      call sb_put(sb, '  const s = 0.5 + 0.5 * Math.sin(t / 1300);                  // a slow breath, eight second')
-      call sb_put(sb, 's long: never a flash'//NL)
+      call sb_put(sb, 'function warBadge(ctx, x, y, wr, now, a, yr) {'//NL)
+      call sb_put(sb, '  const t = now + 977 * (wr.a + 3 * wr.b), s = 0.5 + 0.5 * Math.sin(t / 1300);   // a slow ')
+      call sb_put(sb, 'breath, eight seconds long'//NL)
+      call sb_put(sb, '  // ... and a flare while the year of a battle lasts (at least three seconds, however fast')
+      call sb_put(sb, ' the years go)'//NL)
+      call sb_put(sb, '  const ago = wr.last != null && wr.last >= 0 && (wr.battles | 0) > 0 ? yr - wr.last : 99;'//NL)
+      call sb_put(sb, '  const hot = clamp(Math.max(1 - Math.max(0, ago), wr._hit ? 1 - (now - wr._hit) / 3000 : 0')
+      call sb_put(sb, '), 0, 1);'//NL)
       call sb_put(sb, '  ctx.globalAlpha = a;'//NL)
-      call sb_put(sb, '  const g = ctx.createRadialGradient(x, y, 6, x, y, 18 + 3 * s);'//NL)
-      call sb_put(sb, '  g.addColorStop(0, `rgba(222,80,56,${(0.2 + 0.14 * s).toFixed(3)})`); g.addColorStop(1, ''')
-      call sb_put(sb, 'rgba(222,80,56,0)'');'//NL)
-      call sb_put(sb, '  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 18 + 3 * s, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '  const R = 18 + 3 * s + 7 * hot, g = ctx.createRadialGradient(x, y, 6, x, y, R);'//NL)
+      call sb_put(sb, '  g.addColorStop(0, `rgba(237,51,31,${(0.2 + 0.14 * s + 0.3 * hot).toFixed(3)})`); g.addCol')
+      call sb_put(sb, 'orStop(1, ''rgba(237,51,31,0)'');'//NL)
+      call sb_put(sb, '  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '  if (hot > 0) {'//NL)
+      call sb_put(sb, '    const k = (now / 1100) % 1;'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = a * hot * (1 - k); ctx.strokeStyle = ''#ffb08a''; ctx.lineWidth = 1.5')
+      call sb_put(sb, ';'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.arc(x, y, 11 + 15 * k, 0, 7); ctx.stroke();'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = a;'//NL)
+      call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  const b = ctx.createRadialGradient(x - 2.5, y - 3, 1, x, y, 10);'//NL)
-      call sb_put(sb, '  b.addColorStop(0, ''#d4523c''); b.addColorStop(1, ''#781c13'');'//NL)
+      call sb_put(sb, '  b.addColorStop(0, hot > 0.3 ? ''#f06a4a'' : ''#d4523c''); b.addColorStop(1, ''#781c13'');'//NL)
       call sb_put(sb, '  ctx.fillStyle = ''#05070c''; ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.fill();'//NL)
       call sb_put(sb, '  ctx.fillStyle = b; ctx.beginPath(); ctx.arc(x, y, 9.6, 0, 7); ctx.fill();'//NL)
-      call sb_put(sb, '  ctx.lineWidth = 1.2; ctx.strokeStyle = holy ? ''#f0cf8e'' : ''rgba(255,218,198,.92)''; ct')
-      call sb_put(sb, 'x.stroke();'//NL)
-      call sb_put(sb, '  if (holy) { ctx.lineWidth = 0.9; ctx.strokeStyle = ''rgba(240,207,142,.6)''; ctx.beginPat')
-      call sb_put(sb, 'h(); ctx.arc(x, y, 12.6, 0, 7); ctx.stroke(); }'//NL)
+      call sb_put(sb, '  ctx.lineWidth = 1.2; ctx.strokeStyle = wr.holy ? ''#f0cf8e'' : ''rgba(255,218,198,.92)'';')
+      call sb_put(sb, ' ctx.stroke();'//NL)
+      call sb_put(sb, '  if (wr.holy) { ctx.lineWidth = 0.9; ctx.strokeStyle = ''rgba(240,207,142,.6)''; ctx.begin')
+      call sb_put(sb, 'Path(); ctx.arc(x, y, 12.6, 0, 7); ctx.stroke(); }'//NL)
       call sb_put(sb, '  if (SWORDS) {'//NL)
       call sb_put(sb, '    ctx.save(); ctx.translate(x - 6.6, y - 6.6); ctx.scale(0.55, 0.55);'//NL)
       call sb_put(sb, '    ctx.strokeStyle = ''#fff3e6''; ctx.lineWidth = 2.6; ctx.lineCap = ''round''; ctx.stroke')
       call sb_put(sb, '(SWORDS);'//NL)
       call sb_put(sb, '    ctx.restore();'//NL)
       call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  tug(ctx, x, y + 17, wr, a);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// The tug of war under a badge: pips run from the middle toward the side that is winning, ')
+      call sb_put(sb, 'in its'//NL)
+      call sb_put(sb, '// colour, and a full row takes the next region (three wins running; five for a capital).  ')
+      call sb_put(sb, 'The realm'//NL)
+      call sb_put(sb, '// whose capital lies further west holds the left end, as on the map.'//NL)
+      call sb_put(sb, 'function tug(ctx, x, y, wr, a) {'//NL)
+      call sb_put(sb, '  const A = rOf(wr.a), B = rOf(wr.b), ca = capOf(A), cb = capOf(B), flip = !!(ca && cb && c')
+      call sb_put(sb, 'a.x > cb.x);'//NL)
+      call sb_put(sb, '  const L = flip ? B : A, Rr = flip ? A : B, cl = L ? jewel(L.hue, 12) : ''#d8a657'', cr = ')
+      call sb_put(sb, 'Rr ? jewel(Rr.hue, 12) : ''#d8a657'';'//NL)
+      call sb_put(sb, '  ctx.globalAlpha = a;'//NL)
+      call sb_put(sb, '  if (wr.streak == null) {                         // an older world tells only the battles')
+      call sb_put(sb, ' won'//NL)
+      call sb_put(sb, '    const wa = (flip ? wr.winsB : wr.winsA) | 0, wb = (flip ? wr.winsA : wr.winsB) | 0, W =')
+      call sb_put(sb, ' 30;'//NL)
+      call sb_put(sb, '    if (wa + wb === 0) return;'//NL)
+      call sb_put(sb, '    const f = wa / (wa + wb);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = ''rgba(5,7,12,.88)''; ctx.fillRect(x - W / 2 - 1.5, y - 3, W + 3, 6);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = cl; ctx.fillRect(x - W / 2, y - 1.8, W * f, 3.6);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = cr; ctx.fillRect(x - W / 2 + W * f, y - 1.8, W * (1 - f), 3.6);'//NL)
+      call sb_put(sb, '    return;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const n = clamp((wr.need | 0) || 3, 1, 6), S = clamp((flip ? -wr.streak : wr.streak) | 0,')
+      call sb_put(sb, ' -n, n), pw = n > 3 ? 3 : 4, gp = 1.6;'//NL)
+      call sb_put(sb, '  const W = 2 * n * (pw + gp) + 3;'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''rgba(5,7,12,.88)''; ctx.fillRect(x - W / 2 - 2, y - 3.6, W + 4, 7.2);'//NL)
+      call sb_put(sb, '  for (let k = 0; k < n; k++) {'//NL)
+      call sb_put(sb, '    const xl = x - 1.5 - (k + 1) * (pw + gp) + gp / 2, xr = x + 1.5 + k * (pw + gp) + gp / ')
+      call sb_put(sb, '2;'//NL)
+      call sb_put(sb, '    ctx.fillStyle = S > k ? cl : ''rgba(233,220,192,.16)''; ctx.fillRect(xl, y - 2.2, pw, 4')
+      call sb_put(sb, '.4);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = -S > k ? cr : ''rgba(233,220,192,.16)''; ctx.fillRect(xr, y - 2.2, pw, ')
+      call sb_put(sb, '4.4);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''#f0cf8e''; ctx.fillRect(x - 0.6, y - 3.6, 1.2, 7.2);'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function drawWars(ctx, now, w, cw, ch, fo) {'//NL)
-      call sb_put(sb, '  const s = G.soc;'//NL)
+      call sb_put(sb, '  const s = G.soc, yr = (G.st && G.st.year) || 0, hasB = Array.isArray(s.borders) && !!s._b')
+      call sb_put(sb, 'map;'//NL)
       call sb_put(sb, '  for (const wr of s.wars || []) {'//NL)
       call sb_put(sb, '    const ca = capOf(rOf(wr.a)), cb = capOf(rOf(wr.b));'//NL)
       call sb_put(sb, '    wr._F = null;'//NL)
       call sb_put(sb, '    if (!ca || !cb) continue;'//NL)
       call sb_put(sb, '    const P = c2u(ca.x, ca.y, w), D = shortD(ca, cb, cw, ch), Q2 = [P[0] + D[0], P[1] + D[1')
       call sb_put(sb, ']];'//NL)
-      call sb_put(sb, '    const fade = !fo || wr.a === fo || wr.b === fo ? 1 : 0.22;'//NL)
-      call sb_put(sb, '    for (const [ox, oy] of copies([Math.min(P[0], Q2[0]), Math.min(P[1], Q2[1]), Math.max(P')
-      call sb_put(sb, '[0], Q2[0]), Math.max(P[1], Q2[1])], w)) {'//NL)
-      call sb_put(sb, '      // a straight crimson thread (the caravans curve, and spice is orange-red): it reads ')
-      call sb_put(sb, 'as war'//NL)
-      call sb_put(sb, '      ctx.beginPath(); ctx.moveTo(P[0] + ox, P[1] + oy); ctx.lineTo(Q2[0] + ox, Q2[1] + oy)')
-      call sb_put(sb, ';'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = 0.5 * fade; ctx.strokeStyle = ''#05070c''; ctx.lineWidth = 3.8; ctx')
-      call sb_put(sb, '.stroke();'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = 0.16 * fade; ctx.strokeStyle = ''#ff3b3b''; ctx.lineWidth = 6; ctx.')
-      call sb_put(sb, 'stroke();'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = 0.92 * fade; ctx.strokeStyle = ''#ec3f3f''; ctx.lineWidth = 1.5; ct')
+      call sb_put(sb, '    const mine = !!fo && (wr.a === fo || wr.b === fo), fade = !fo || mine ? 1 : 0.22;'//NL)
+      call sb_put(sb, '    // a war is fought at its front: the thread between the capitals is drawn only for the ')
+      call sb_put(sb, 'realm in'//NL)
+      call sb_put(sb, '    // focus, or when the two share no border (a war across the water, a blockade)'//NL)
+      call sb_put(sb, '    if (!hasB || mine || !s._bmap.has(pair(wr.a, wr.b)))'//NL)
+      call sb_put(sb, '      for (const [ox, oy] of copies([Math.min(P[0], Q2[0]), Math.min(P[1], Q2[1]), Math.max')
+      call sb_put(sb, '(P[0], Q2[0]), Math.max(P[1], Q2[1])], w)) {'//NL)
+      call sb_put(sb, '        ctx.beginPath(); ctx.moveTo(P[0] + ox, P[1] + oy); ctx.lineTo(Q2[0] + ox, Q2[1] + o')
+      call sb_put(sb, 'y);'//NL)
+      call sb_put(sb, '        ctx.globalAlpha = 0.5 * fade; ctx.strokeStyle = ''#05070c''; ctx.lineWidth = 3.8; c')
+      call sb_put(sb, 'tx.stroke();'//NL)
+      call sb_put(sb, '        ctx.globalAlpha = 0.16 * fade; ctx.strokeStyle = ''#ff3b3b''; ctx.lineWidth = 6; ct')
       call sb_put(sb, 'x.stroke();'//NL)
-      call sb_put(sb, '      const poly = [[P[0] + ox, P[1] + oy], [Q2[0] + ox, Q2[1] + oy]];'//NL)
-      call sb_put(sb, '      G.hits.push({ type: ''war'', war: wr, poly });'//NL)
-      call sb_put(sb, '      edgeTags(ctx, poly, (rOf(wr.a) || {}).name, (rOf(wr.b) || {}).name, ''#f4a592'', fade')
-      call sb_put(sb, ');'//NL)
-      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '        ctx.globalAlpha = 0.92 * fade; ctx.strokeStyle = ''#ec3f3f''; ctx.lineWidth = 1.5; ')
+      call sb_put(sb, 'ctx.stroke();'//NL)
+      call sb_put(sb, '        const poly = [[P[0] + ox, P[1] + oy], [Q2[0] + ox, Q2[1] + oy]];'//NL)
+      call sb_put(sb, '        G.hits.push({ type: ''war'', war: wr, poly });'//NL)
+      call sb_put(sb, '        if (typeof edgeTags === ''function'') edgeTags(ctx, poly, (rOf(wr.a) || {}).name, (')
+      call sb_put(sb, 'rOf(wr.b) || {}).name, ''#f4a592'', fade);'//NL)
+      call sb_put(sb, '      }'//NL)
       call sb_put(sb, '    wr._F = wr.x || wr.y ? c2u(wr.x, wr.y, w) : [P[0] + D[0] / 2, P[1] + D[1] / 2];'//NL)
       call sb_put(sb, '    wr._fade = fade;'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  for (const wr of s.wars || []) {                 // the badges over every thread'//NL)
+      call sb_put(sb, '  for (const wr of s.wars || []) {                 // the badges over every thread, on the ')
+      call sb_put(sb, 'fronts'//NL)
       call sb_put(sb, '    const F = wr._F;'//NL)
       call sb_put(sb, '    if (!F) continue;'//NL)
-      call sb_put(sb, '    for (const [ox, oy] of copies([F[0] - 14, F[1] - 14, F[0] + 14, F[1] + 14], w)) {'//NL)
-      call sb_put(sb, '      warBadge(ctx, F[0] + ox, F[1] + oy, !!wr.holy, now + 977 * (wr.a + 3 * wr.b), wr._fad')
-      call sb_put(sb, 'e);'//NL)
-      call sb_put(sb, '      G.hits.push({ type: ''war'', war: wr, x: F[0] + ox, y: F[1] + oy, r: 12 });'//NL)
+      call sb_put(sb, '    for (const [ox, oy] of copies([F[0] - 20, F[1] - 14, F[0] + 20, F[1] + 24], w)) {'//NL)
+      call sb_put(sb, '      warBadge(ctx, F[0] + ox, F[1] + oy, wr, now, wr._fade, yr);'//NL)
+      call sb_put(sb, '      G.hits.push({ type: ''war'', war: wr, x: F[0] + ox, y: F[1] + oy + 3, r: 14 });'//NL)
       call sb_put(sb, '    }'//NL)
       call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the colours of how two realms stand (the server draws their borders in the same)'//NL)
+      call sb_put(sb, 'const RELC = { war: ''#ED331F'', tense: ''#F0A030'', truce: ''#F2F2F2'', ally: ''#E8C35A'',')
+      call sb_put(sb, ' pact: ''#3FB8AF'' };'//NL)
+      call sb_put(sb, 'const MEDBG = { war: ''#7a1d14'', tense: ''#5c3510'', truce: ''#2b303b'', ally: ''#3d2f10''')
+      call sb_put(sb, ', pact: ''#0e3634'' };'//NL)
+      call sb_put(sb, 'function medal(ctx, x, y, r, st, a, t) {'//NL)
+      call sb_put(sb, '  const c = RELC[st] || ''#e4dac4'';'//NL)
+      call sb_put(sb, '  if (st === ''war'' || st === ''tense'') {            // war pulses; an old quarrel only s')
+      call sb_put(sb, 'moulders'//NL)
+      call sb_put(sb, '    const s = 0.5 + 0.5 * Math.sin(t / (st === ''war'' ? 500 : 1100));'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = a * (st === ''war'' ? 0.25 + 0.25 * s : 0.12 + 0.12 * s);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, r + 3 + 3 * s, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  ctx.globalAlpha = a;'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''#05070c''; ctx.beginPath(); ctx.arc(x, y, r + 1.3, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '  ctx.fillStyle = MEDBG[st] || ''#222''; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(')
+      call sb_put(sb, ');'//NL)
+      call sb_put(sb, '  ctx.lineWidth = 1.1; ctx.strokeStyle = c; ctx.stroke();'//NL)
+      call sb_put(sb, '  ctx.save(); ctx.translate(x, y); ctx.scale(r / 8, r / 8);'//NL)
+      call sb_put(sb, '  ctx.lineCap = ''round''; ctx.lineJoin = ''round'';'//NL)
+      call sb_put(sb, '  if (st === ''ally'') {                             // two rings, linked'//NL)
+      call sb_put(sb, '    ctx.strokeStyle = c; ctx.lineWidth = 1.6;'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.arc(-2.2, 0, 3.3, 0, 7); ctx.stroke();'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.arc(2.2, 0, 3.3, 0, 7); ctx.stroke();'//NL)
+      call sb_put(sb, '  } else if (st === ''pact'') {                      // a coin with a square hole: the mark')
+      call sb_put(sb, 'ets stand open'//NL)
+      call sb_put(sb, '    ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, 0, 4.4, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '    ctx.fillStyle = ''#0b1c1b''; ctx.fillRect(-1.4, -1.4, 2.8, 2.8);'//NL)
+      call sb_put(sb, '  } else if (st === ''truce'') {                     // a white flag'//NL)
+      call sb_put(sb, '    ctx.strokeStyle = c; ctx.lineWidth = 1.2;'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.moveTo(-2.8, 5); ctx.lineTo(-2.8, -5); ctx.stroke();'//NL)
+      call sb_put(sb, '    ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(-2.8, -4.8); ctx.quadraticCurveTo(0.6, -')
+      call sb_put(sb, '6, 4.6, -4.4);'//NL)
+      call sb_put(sb, '    ctx.lineTo(4.6, -0.4); ctx.quadraticCurveTo(0.8, 0.8, -2.8, -0.6); ctx.closePath(); ctx')
+      call sb_put(sb, '.fill();'//NL)
+      call sb_put(sb, '  } else if (st === ''tense'') {                     // a warning'//NL)
+      call sb_put(sb, '    ctx.fillStyle = ''#fff1d6''; ctx.fillRect(-0.95, -4.6, 1.9, 5.6);'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.arc(0, 3.5, 1.15, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '  } else if (st === ''war'' && SWORDS) {'//NL)
+      call sb_put(sb, '    ctx.translate(-5.5, -5.5); ctx.scale(0.46, 0.46);'//NL)
+      call sb_put(sb, '    ctx.strokeStyle = ''#fff3e6''; ctx.lineWidth = 2.6; ctx.stroke(SWORDS);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  ctx.restore();'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// A medallion on every border that means something.  The realm in focus keeps its own brig')
+      call sb_put(sb, 'ht and'//NL)
+      call sb_put(sb, '// the rest dim; where medallions crowd, the graver stands and the lesser yields.'//NL)
+      call sb_put(sb, 'function drawBorders(ctx, now, w, fo) {'//NL)
+      call sb_put(sb, '  const B = G.soc._bord || [], placed = [], zb = G.z > 1 ? 1.5 : 0;'//NL)
+      call sb_put(sb, '  for (const pass of [1, 0]) for (const bd of B) {'//NL)
+      call sb_put(sb, '    const mine = !!fo && (bd.a === fo || bd.b === fo);'//NL)
+      call sb_put(sb, '    if ((pass === 1) !== mine || bd.st === ''peace'' || (bd.st === ''war'' && bd.w && showW')
+      call sb_put(sb, 'ars())) continue;'//NL)
+      call sb_put(sb, '    if (!mine && G.z === 1 && (bd.len | 0) < 3) continue;          // a mere touch of borde')
+      call sb_put(sb, 'rs: only in focus'//NL)
+      call sb_put(sb, '    const p = c2s(bd.x, bd.y, w);'//NL)
+      call sb_put(sb, '    if (!p) continue;'//NL)
+      call sb_put(sb, '    const r = (mine ? 8 : 5.6 + Math.min(1.6, (bd.len || 0) / 30)) + zb;'//NL)
+      call sb_put(sb, '    if (placed.some(q => Math.hypot(q[0] - p[0], q[1] - p[1]) < q[2] + r + 1)) continue;'//NL)
+      call sb_put(sb, '    placed.push([p[0], p[1], r]);'//NL)
+      call sb_put(sb, '    medal(ctx, p[0], p[1], r, bd.st, fo && !mine ? 0.3 : 1, now + 613 * (bd.a + 7 * bd.b));'//NL)
+      call sb_put(sb, '    G.hits.push({ type: ''border'', bd, x: p[0], y: p[1], r: r + 2 });'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// the realm in focus: gold threads to its allies, teal dots to its partners in a trade pac')
+      call sb_put(sb, 't'//NL)
+      call sb_put(sb, 'function drawTies(ctx, w, cw, ch, fo) {'//NL)
+      call sb_put(sb, '  const m = rOf(fo), ca = capOf(m);'//NL)
+      call sb_put(sb, '  if (!ca || m.fallen) return;'//NL)
+      call sb_put(sb, '  const P = c2u(ca.x, ca.y, w);'//NL)
+      call sb_put(sb, '  const tie = (id, col, dash, lw, bow) => {'//NL)
+      call sb_put(sb, '    const cb = capOf(rOf(id));'//NL)
+      call sb_put(sb, '    if (!cb) return;'//NL)
+      call sb_put(sb, '    const g = quad(P, shortD(ca, cb, cw, ch), bow);'//NL)
+      call sb_put(sb, '    if (g.L < 8) return;'//NL)
+      call sb_put(sb, '    for (const [ox, oy] of copies(g.bb, w)) {'//NL)
+      call sb_put(sb, '      qPath(ctx, g, ox, oy);'//NL)
+      call sb_put(sb, '      ctx.setLineDash([]); ctx.globalAlpha = 0.45; ctx.strokeStyle = ''#05070c''; ctx.lineW')
+      call sb_put(sb, 'idth = lw + 2.4; ctx.stroke();'//NL)
+      call sb_put(sb, '      ctx.setLineDash(dash); ctx.globalAlpha = 0.95; ctx.strokeStyle = col; ctx.lineWidth =')
+      call sb_put(sb, ' lw; ctx.stroke();'//NL)
+      call sb_put(sb, '      ctx.setLineDash([]);'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  for (const id of m._ally || []) tie(id, RELC.ally, [], 1.7, 0.1);'//NL)
+      call sb_put(sb, '  for (const id of m._pact || []) if (!(m._ally && m._ally.has(id))) tie(id, RELC.pact, [1.')
+      call sb_put(sb, '5, 4], 1.6, -0.1);'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function drawFaiths(ctx, now, w) {'//NL)
       call sb_put(sb, '  const s = G.soc;'//NL)
@@ -25563,15 +27247,15 @@ contains
       call sb_put(sb, '  return m ? +m[1].replace(/\D/g, '''') : 0;'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function battleSeen(e, now) {'//NL)
-      call sb_put(sb, '  BAT.push({ x: e.x, y: e.y, t0: now, n: slainOf(e.text) });'//NL)
+      call sb_put(sb, '  if (BAT.some(b => Math.abs(b.x - e.x) + Math.abs(b.y - e.y) < 8 && now - b.t0 < 3000)) re')
+      call sb_put(sb, 'turn;   // told already'//NL)
+      call sb_put(sb, '  BAT.push({ x: e.x, y: e.y, t0: now, n: e.n != null ? +e.n || 0 : slainOf(e.text) });'//NL)
       call sb_put(sb, '  while (BAT.length > 6) BAT.shift();'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function pointTo(x, y) {                           // show a place: a gold ring; the map on')
-      call sb_put(sb, 'ly moves when zoomed in'//NL)
+      call sb_put(sb, 'function pointTo(x, y) {         // show a place: a gold ring, moving the map if it is out of view'//NL)
       call sb_put(sb, '  if (!x && !y) return;'//NL)
       call sb_put(sb, '  const p = c2s(x, y), m = 30;'//NL)
-      call sb_put(sb, '  if (G.z > 1 && (!p || p[0] < m || p[1] < m || p[0] > G.pw - m || p[1] > G.ph - m)) panTo(')
-      call sb_put(sb, 'x, y);'//NL)
+      call sb_put(sb, '  if (!p || p[0] < m || p[1] < m || p[0] > G.pw - m || p[1] > G.ph - m) panTo(x, y);'//NL)
       call sb_put(sb, '  MARK.push({ x, y, t0: performance.now() });'//NL)
       call sb_put(sb, '  while (MARK.length > 3) MARK.shift();'//NL)
       call sb_put(sb, '}'//NL)
@@ -25580,6 +27264,8 @@ contains
       call sb_put(sb, '  for (let k = BAT.length - 1; k >= 0; k--) if (now - BAT[k].t0 > 4400) BAT.splice(k, 1);'//NL)
       call sb_put(sb, '  for (let k = MARK.length - 1; k >= 0; k--) if (now - MARK[k].t0 > 3000) MARK.splice(k, 1)')
       call sb_put(sb, ';'//NL)
+      call sb_put(sb, '  for (let k = PING.length - 1; k >= 0; k--) if (now - PING[k].t0 > PING[k].life) PING.spli')
+      call sb_put(sb, 'ce(k, 1);'//NL)
       call sb_put(sb, '  ctx.save();'//NL)
       call sb_put(sb, '  ctx.lineCap = ''round'';'//NL)
       call sb_put(sb, '  if (showWars()) for (const b of BAT) {'//NL)
@@ -25612,17 +27298,45 @@ contains
       call sb_put(sb, '    ctx.lineWidth = 3.2; ctx.strokeStyle = ''rgba(5,6,10,.9)''; ctx.strokeText(s, x, y);'//NL)
       call sb_put(sb, '    ctx.fillStyle = ''#f7cdbd''; ctx.fillText(s, x, y);'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  const bc = BN.cur;'//NL)
-      call sb_put(sb, '  if (bc && (bc.x || bc.y)) {'//NL)
-      call sb_put(sb, '    const p = c2s(bc.x, bc.y, w);'//NL)
-      call sb_put(sb, '    if (p) {'//NL)
-      call sb_put(sb, '      const s = 0.5 + 0.5 * Math.sin((now - BN.t0) / 700), r = 13 + 4 * s;'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = 0.2 + 0.12 * s; ctx.strokeStyle = ''#f0cf8e''; ctx.lineWidth = 7;'//NL)
-      call sb_put(sb, '      ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.stroke();'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = 0.55 + 0.3 * s; ctx.lineWidth = 1.5; ctx.stroke();'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = 0.9; ctx.fillStyle = ''#f0cf8e''; ctx.beginPath(); ctx.arc(p[0], p[')
-      call sb_put(sb, '1], 1.8, 0, 7); ctx.fill();'//NL)
+      call sb_put(sb, '  // the marks of the news: a pulse or two, the glyph of the deed, and a few words beside i')
+      call sb_put(sb, 't'//NL)
+      call sb_put(sb, '  for (const q of PING) {'//NL)
+      call sb_put(sb, '    const p = c2s(q.x, q.y, w);'//NL)
+      call sb_put(sb, '    if (!p) continue;'//NL)
+      call sb_put(sb, '    const el = now - q.t0, u = el / q.life, a = u < 0.08 ? u / 0.08 : u > 0.7 ? Math.max(0,')
+      call sb_put(sb, ' (1 - u) / 0.3) : 1;'//NL)
+      call sb_put(sb, '    for (let j = 0; j < (q.t >= 2 ? 2 : 1); j++) {'//NL)
+      call sb_put(sb, '      const ph = el / 1500 + j * 0.5;'//NL)
+      call sb_put(sb, '      if (ph > 3) continue;'//NL)
+      call sb_put(sb, '      const k = ph % 1;'//NL)
+      call sb_put(sb, '      ctx.globalAlpha = 0.75 * a * (1 - k); ctx.strokeStyle = q.c; ctx.lineWidth = 1.4;'//NL)
+      call sb_put(sb, '      ctx.beginPath(); ctx.arc(p[0], p[1], 6 + 20 * k, 0, 7); ctx.stroke();'//NL)
       call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = a;'//NL)
+      call sb_put(sb, '    ctx.fillStyle = ''rgba(8,10,18,.92)''; ctx.beginPath(); ctx.arc(p[0], p[1], 8.5, 0, 7);')
+      call sb_put(sb, ' ctx.fill();'//NL)
+      call sb_put(sb, '    ctx.lineWidth = 1.2; ctx.strokeStyle = q.c; ctx.stroke();'//NL)
+      call sb_put(sb, '    ctx.textAlign = ''center''; ctx.textBaseline = ''middle'';'//NL)
+      call sb_put(sb, '    ctx.fillStyle = q.c; ctx.font = `12px ${SERIF}`; ctx.fillText(q.g, p[0], p[1] + 0.5);'//NL)
+      call sb_put(sb, '    ctx.font = `italic 600 11px ${SERIF}`;'//NL)
+      call sb_put(sb, '    const tw = ctx.measureText(q.s).width, right = p[0] + 14 + tw < G.pw - 4, tx = right ? ')
+      call sb_put(sb, 'p[0] + 13 : p[0] - 13;'//NL)
+      call sb_put(sb, '    ctx.textAlign = right ? ''left'' : ''right'';'//NL)
+      call sb_put(sb, '    ctx.lineWidth = 3.2; ctx.strokeStyle = ''rgba(5,6,10,.9)''; ctx.strokeText(q.s, tx, p[1')
+      call sb_put(sb, ']);'//NL)
+      call sb_put(sb, '    ctx.fillStyle = ''#f3e7cc''; ctx.fillText(q.s, tx, p[1]);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  // the place of the great card, and of the headline under the reader''s hand'//NL)
+      call sb_put(sb, '  for (const e of [NEWS.card, NEWS.hot && NEWS.hot.e]) {'//NL)
+      call sb_put(sb, '    if (!e || !(e.x || e.y)) continue;'//NL)
+      call sb_put(sb, '    const p = c2s(e.x, e.y, w);'//NL)
+      call sb_put(sb, '    if (!p) continue;'//NL)
+      call sb_put(sb, '    const s = 0.5 + 0.5 * Math.sin(now / 700), r = 13 + 4 * s;'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = 0.2 + 0.12 * s; ctx.strokeStyle = ''#f0cf8e''; ctx.lineWidth = 7;'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, 7); ctx.stroke();'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = 0.55 + 0.3 * s; ctx.lineWidth = 1.5; ctx.stroke();'//NL)
+      call sb_put(sb, '    ctx.globalAlpha = 0.9; ctx.fillStyle = ''#f0cf8e''; ctx.beginPath(); ctx.arc(p[0], p[1]')
+      call sb_put(sb, ', 1.8, 0, 7); ctx.fill();'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  for (const m of MARK) {'//NL)
       call sb_put(sb, '    const p = c2s(m.x, m.y, w);'//NL)
@@ -25656,6 +27370,18 @@ contains
       call sb_put(sb, ' ? ''since the year '' + Math.floor(w.since) : ''''}</span></div>` +'//NL)
       call sb_put(sb, '    `<div class="wt">${rnx(w.a)}<span class="dim">against</span>${rnx(w.b)}</div>`;'//NL)
       call sb_put(sb, '  if (w.cause) h += `<div class="why">${esc(cap1(w.cause))}.</div>`;'//NL)
+      call sb_put(sb, '  if (w.fa || w.fb) h += `<div class="wfr">${icon(''i-swords'')}<span>The front: <b>${esc(w')
+      call sb_put(sb, '.fa || ''the marches'')}</b> against <b>${esc(w.fb || ''the marches'')}</b></span></div>`;'//NL)
+      call sb_put(sb, '  if (w.streak != null) {'//NL)
+      call sb_put(sb, '    const S = w.streak | 0, n = (w.need | 0) || 3, at = S > 0 ? w.fb : w.fa;'//NL)
+      call sb_put(sb, '    h += `<div class="wfr">${tugHTML(w)}<span>${S ? `${esc(S > 0 ? nA : nB)} has won ${Math')
+      call sb_put(sb, '.abs(S)} running; ${n} in a row take ` +'//NL)
+      call sb_put(sb, '      `${at ? esc(at) : ''the next region''}${n >= 5 ? '', a capital'' : ''''}.` : ''The fr')
+      call sb_put(sb, 'ont stands even.''}</span></div>`;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  if (w.last != null && w.last >= 0 && w.battles && w.lastWin)'//NL)
+      call sb_put(sb, '    h += `<div class="wfr"><span>The last battle, in ${Math.floor(w.last)}: ${esc(rName(w.l')
+      call sb_put(sb, 'astWin))} won${w.lastSlain ? `, and ${big(w.lastSlain)} fell` : ''''}.</span></div>`;'//NL)
       call sb_put(sb, '  if (w.battles != null) {'//NL)
       call sb_put(sb, '    h += `<table class="wtab"><tr><th></th><th>${esc(nA)}</th><th>${esc(nB)}</th></tr>` +'//NL)
       call sb_put(sb, '      `<tr><td>battles won</td><td>${w.winsA | 0}</td><td>${w.winsB | 0}</td></tr>` +'//NL)
@@ -25664,9 +27390,46 @@ contains
       call sb_put(sb, '      `<tr><td>regions taken</td><td>${w.takenA | 0}</td><td>${w.takenB | 0}</td></tr></tab')
       call sb_put(sb, 'le>` +'//NL)
       call sb_put(sb, '      `<div class="wsum">${w.battles | 0} battle${w.battles === 1 ? '''' : ''s''} fought${w')
-      call sb_put(sb, '.x || w.y ? '' · the badge marks the front'' : ''''}</div>`;'//NL)
+      call sb_put(sb, '.x || w.y ? '' · the badge stands on the front'' : ''''}</div>`;'//NL)
       call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const bd = G.soc && G.soc._bmap ? G.soc._bmap.get(pair(w.a, w.b)) : null;'//NL)
+      call sb_put(sb, '  if (bd) h += `<div class="wsum">A shared border of ${bd.len | 0} cells; relations ${bd.re')
+      call sb_put(sb, 'l > 0 ? ''+'' : ''''}${bd.rel | 0}.</div>`;'//NL)
       call sb_put(sb, '  return h;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a border medallion under the hand: the two realms, how they stand and since when, their ')
+      call sb_put(sb, 'regard,'//NL)
+      call sb_put(sb, '// the length of the border, the battles'//NL)
+      call sb_put(sb, 'const STN = { war: ''At war'', truce: ''A truce'', ally: ''Allies'', pact: ''A trade pact''')
+      call sb_put(sb, ', tense: ''A tense border'', peace: ''At peace'' };'//NL)
+      call sb_put(sb, 'const STL = { war: ''blood is shed along this border'', truce: ''a sworn peace holds for a ')
+      call sb_put(sb, 'term of years'','//NL)
+      call sb_put(sb, '  ally: ''sworn to stand together in war'', pact: ''their markets stand open to each other')
+      call sb_put(sb, ''','//NL)
+      call sb_put(sb, '  tense: ''they hate each other, and war may come'', peace: ''neighbours at peace'' };'//NL)
+      call sb_put(sb, 'function borderHTML(bd) {'//NL)
+      call sb_put(sb, '  const s = G.soc, k = pair(bd.a, bd.b), sn = DIP.since.get(k), tr = s._tmap ? s._tmap.get(')
+      call sb_put(sb, 'k) : null, wr = bd.w;'//NL)
+      call sb_put(sb, '  const since = wr && wr.since != null ? wr.since : sn && sn.y != null ? sn.y : null;'//NL)
+      call sb_put(sb, '  let h = `<div class="dh"><b style="color:${RELC[bd.st] || ''inherit''}">${STN[bd.st] || ')
+      call sb_put(sb, '''A border''}</b>` +'//NL)
+      call sb_put(sb, '    `<span>${since != null ? ''since '' + Math.floor(since) : ''''}</span></div>` +'//NL)
+      call sb_put(sb, '    `<div class="wt">${rnx(bd.a)}<span class="dim">and</span>${rnx(bd.b)}</div>` +'//NL)
+      call sb_put(sb, '    `<div class="why">${cap1(STL[bd.st] || ''neighbours'')}${tr ? `, until the year ${Math.')
+      call sb_put(sb, 'floor(tr.until)}` : ''''}.</div>` +'//NL)
+      call sb_put(sb, '    `<div class="bdl"><span>regard</span>${relBar(bd.rel)}<b>${bd.rel > 0 ? ''+'' : ''''}${')
+      call sb_put(sb, 'bd.rel | 0}</b></div>` +'//NL)
+      call sb_put(sb, '    `<div class="bdl"><span>shared border</span><b>${bd.len | 0} cells</b></div>`;'//NL)
+      call sb_put(sb, '  if (wr) h += `<div class="bdl"><span>battles</span><b>${wr.battles | 0} · won ${wr.winsA')
+      call sb_put(sb, ' | 0}–${wr.winsB | 0}</b></div>`;'//NL)
+      call sb_put(sb, '  return h;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function relBar(v) {                               // −100 … +100 about the middle: hat')
+      call sb_put(sb, 'red red, friendship gold'//NL)
+      call sb_put(sb, '  const t = clamp((+v || 0) / 100, -1, 1);'//NL)
+      call sb_put(sb, '  return `<span class="relb"><i style="left:${(50 + Math.min(0, 50 * t)).toFixed(0)}%;width')
+      call sb_put(sb, ':${Math.abs(50 * t).toFixed(0)}%;` +'//NL)
+      call sb_put(sb, '    `background:${t < 0 ? ''#d0603e'' : ''#d8a657''}"></i></span>`;'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function flowHTML(f) {'//NL)
       call sb_put(sb, '  const g = GOODS[gIdx(f)], A = rOf(f.from), B = rOf(f.to);'//NL)
@@ -25694,8 +27457,9 @@ contains
       call sb_put(sb, 'function showHit(hh) {'//NL)
       call sb_put(sb, '  const t = $(''#tip''), h = G.hover;'//NL)
       call sb_put(sb, '  if (!h) return;'//NL)
-      call sb_put(sb, '  t.innerHTML = hh.type === ''war'' ? warHTML(hh.war) : hh.type === ''flow'' ? flowHTML(hh.')
-      call sb_put(sb, 'f) : hh.type === ''emb'' ? embHTML(hh.e) : holyHTML(hh.f);'//NL)
+      call sb_put(sb, '  t.innerHTML = hh.type === ''war'' ? warHTML(hh.war) : hh.type === ''border'' ? borderHTML')
+      call sb_put(sb, '(hh.bd) : hh.type === ''flow'' ? flowHTML(hh.f) :'//NL)
+      call sb_put(sb, '    hh.type === ''emb'' ? embHTML(hh.e) : holyHTML(hh.f);'//NL)
       call sb_put(sb, '  t.className = ''card on'';'//NL)
       call sb_put(sb, '  placeTip(t, h);'//NL)
       call sb_put(sb, '}'//NL)
@@ -25789,12 +27553,37 @@ contains
       call sb_put(sb, NL)
       call sb_put(sb, '// ===================================================================== the banners of gre')
       call sb_put(sb, 'at events'//NL)
-      call sb_put(sb, 'const MAJOR = new Set([''war'', ''holywar'', ''peace'', ''conquest'', ''realm'', ''realm_fa')
-      call sb_put(sb, 'll'', ''revolution'', ''secede'', ''famine'','//NL)
-      call sb_put(sb, '  ''sanction'', ''plague'', ''meteor'', ''faith'', ''schism'', ''prophecy_kept'', ''prophec')
-      call sb_put(sb, 'y_failed'', ''praise'', ''age'']);'//NL)
-      call sb_put(sb, 'const isBanner = e => MAJOR.has(e.kind) || (e.imp || 0) >= 4;'//NL)
-      call sb_put(sb, 'const isMajor = e => (e.imp || 0) >= 3 || MAJOR.has(e.kind);'//NL)
+      call sb_put(sb, '// Four voices, by the tier the Chronicle gives each entry (from an older Chronicle, guesse')
+      call sb_put(sb, 'd from its'//NL)
+      call sb_put(sb, '// kind and weight): 3 a great card for the turning of the ages; 2 a headline in the corner')
+      call sb_put(sb, ' of the map'//NL)
+      call sb_put(sb, '// and a mark at its place; 1 the mark alone; 0 the Chronicle only.'//NL)
+      call sb_put(sb, 'const EPOCH = new Set([''age'', ''snowball'', ''thaw'', ''hothouse'', ''frost'', ''genesis')
+      call sb_put(sb, ''']);'//NL)
+      call sb_put(sb, 'const HEADK = new Set([''war'', ''holywar'', ''peace'', ''realm'', ''realm_fall'', ''secede')
+      call sb_put(sb, ''', ''faith'', ''schism'', ''prophecy_kept'','//NL)
+      call sb_put(sb, '  ''legend'', ''titan'', ''plague'', ''meteor'']);'//NL)
+      call sb_put(sb, 'const QUIETK = new Set([''succession'', ''annex'', ''tariff'', ''price'', ''caravan'', ''em')
+      call sb_put(sb, 'bargo_end'', ''prophet_death'', ''hybrid'','//NL)
+      call sb_put(sb, '  ''locusts_end'', ''sweep'', ''peak'']);'//NL)
+      call sb_put(sb, '// the kinds that name two realms (a and b), and those that name one (a)'//NL)
+      call sb_put(sb, 'const PAIRK = new Set([''war'', ''holywar'', ''peace'', ''battle'', ''conquest'', ''allianc')
+      call sb_put(sb, 'e'', ''sanction'', ''tariff'', ''tradepact'','//NL)
+      call sb_put(sb, '  ''embargo_end'', ''caravan'', ''secede'', ''realm_fall'']);'//NL)
+      call sb_put(sb, 'const ONEK = new Set([''realm'', ''revolution'', ''succession'', ''famine'', ''annex'', ''c')
+      call sb_put(sb, 'onvert'']);'//NL)
+      call sb_put(sb, 'function tierOf(e) {'//NL)
+      call sb_put(sb, '  if (e.tier != null && e.tier !== '''') return clamp(e.tier | 0, 0, 3);'//NL)
+      call sb_put(sb, '  const k = e.kind;'//NL)
+      call sb_put(sb, '  if (EPOCH.has(k) || (k === ''dieoff'' && (e.year || 0) > 10)) return 3;'//NL)
+      call sb_put(sb, '  if (HEADK.has(k)) return 2;'//NL)
+      call sb_put(sb, '  return QUIETK.has(k) || (e.imp || 0) < 2 ? 0 : 1;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a story come round again is told no louder than a mark on the map'//NL)
+      call sb_put(sb, 'const loud = e => e.prev || e.rep > 0 ? Math.min(1, tierOf(e)) : tierOf(e);'//NL)
+      call sb_put(sb, 'const isBanner = e => tierOf(e) >= 2;'//NL)
+      call sb_put(sb, 'const isMajor = e => tierOf(e) >= 2 || (e.imp || 0) >= 3;'//NL)
+      call sb_put(sb, 'const isRealmy = e => PAIRK.has(e.kind) || ONEK.has(e.kind);'//NL)
       call sb_put(sb, 'const BTITLE = {'//NL)
       call sb_put(sb, '  war: ''War'', holywar: ''Holy War'', peace: ''Peace'', conquest: ''Conquest'', realm: ''A')
       call sb_put(sb, ' Realm Is Born'', realm_fall: ''A Realm Falls'','//NL)
@@ -25825,7 +27614,23 @@ contains
       call sb_put(sb, 'm: ''green'', thaw: ''green'','//NL)
       call sb_put(sb, '  faith: ''violet'', schism: ''violet'', prophecy_kept: ''violet'', prophecy_failed: ''viol')
       call sb_put(sb, 'et'', praise: ''violet'', prophet: ''violet'' };'//NL)
-      call sb_put(sb, 'const BN = { q: [], cur: null, tm: 0, t0: 0 };'//NL)
+      call sb_put(sb, '// the news as it stands: the card, the headlines showing and waiting, the digest, the mark')
+      call sb_put(sb, 's on the map;'//NL)
+      call sb_put(sb, '// and the reader''s patience (the Alerts), kept like the switches'//NL)
+      call sb_put(sb, 'const NEWS = { lvl: ''head'', card: null, tm: 0, items: [], wait: [], last: -1e9, tk: 0, di')
+      call sb_put(sb, 'g: null, hot: null, box: '''', el: null };'//NL)
+      call sb_put(sb, 'const ALERTS = { all: [''all alerts'', ''Every great event as a headline, and a mark on the')
+      call sb_put(sb, ' map for every lesser deed.''],'//NL)
+      call sb_put(sb, '  head: [''headlines'', ''Great events as headlines in the corner of the map; the dealings ')
+      call sb_put(sb, 'of the realms as marks on it.''],'//NL)
+      call sb_put(sb, '  quiet: [''quiet'', ''Only the turning of the ages; all else waits in the Chronicle.''] };'//NL)
+      call sb_put(sb, 'const ALK = [''head'', ''all'', ''quiet''];'//NL)
+      call sb_put(sb, 'try { const v = localStorage.getItem(''rl.alerts''); if (ALK.includes(v)) NEWS.lvl = v; } c')
+      call sb_put(sb, 'atch (e) { /* no storage */ }'//NL)
+      call sb_put(sb, 'if (ALK.includes(Q.get(''alerts''))) NEWS.lvl = Q.get(''alerts'');'//NL)
+      call sb_put(sb, 'const PING = [];'//NL)
+      call sb_put(sb, 'const BN = { get cur() { return NEWS.card || NEWS.items[0] || NEWS.wait[0] || NEWS.dig || P')
+      call sb_put(sb, 'ING[0] || null; } };'//NL)
       call sb_put(sb, 'function realmsIn(text) {'//NL)
       call sb_put(sb, '  const s = G.soc, t = String(text || ''''), out = [];'//NL)
       call sb_put(sb, '  if (!s) return out;'//NL)
@@ -25855,50 +27660,243 @@ contains
       call sb_put(sb, '  const k = s.lastIndexOf('' '', n - 1);'//NL)
       call sb_put(sb, '  return s.slice(0, k > n * 0.6 ? k : n - 1).replace(/[,;:\s]+$/, '''') + ''…'';'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function bannerHTML(e) {'//NL)
-      call sb_put(sb, '  const k = e.kind, R = realmsIn(e.text);'//NL)
-      call sb_put(sb, '  let ic;'//NL)
-      call sb_put(sb, '  if ((k === ''war'' || k === ''holywar'' || k === ''peace'' || k === ''alliance'' || k ===')
-      call sb_put(sb, ' ''conquest'') && R.length >= 2)'//NL)
-      call sb_put(sb, '    ic = armsImg(R[0]) + `<i class="bx">${k === ''peace'' || k === ''alliance'' ? glyph(k) ')
-      call sb_put(sb, ': icon(''i-swords'')}</i>` + armsImg(R[1]);'//NL)
-      call sb_put(sb, '  else if (R.length && [''realm'', ''realm_fall'', ''revolution'', ''secede'', ''famine'', ')
-      call sb_put(sb, '''sanction'', ''succession'','//NL)
-      call sb_put(sb, '    ''annex'', ''war'', ''holywar'', ''peace'', ''conquest'', ''alliance'', ''tradepact'', ')
-      call sb_put(sb, '''embargo_end''].includes(k))'//NL)
-      call sb_put(sb, '    ic = armsImg(R[0]) + (k === ''famine'' ? `<i class="bx fam">${icon(''i-famine'')}</i>` ')
-      call sb_put(sb, ': '''');'//NL)
-      call sb_put(sb, '  else {'//NL)
-      call sb_put(sb, '    const f = TONE[k] === ''violet'' || k === ''holywar'' ? faithIn(e.text) : null;'//NL)
-      call sb_put(sb, '    ic = f ? flame(f.hue) : `<i class="bg">${glyph(k)}</i>`;'//NL)
+      call sb_put(sb, '// the realms a story names: by their ids, or (from an older Chronicle) by their names in i')
+      call sb_put(sb, 'ts words'//NL)
+      call sb_put(sb, 'function idsOf(e) {'//NL)
+      call sb_put(sb, '  if (e._ids) return e._ids;'//NL)
+      call sb_put(sb, '  const k = e.kind;'//NL)
+      call sb_put(sb, '  let a = 0, b = 0;'//NL)
+      call sb_put(sb, '  if (PAIRK.has(k) || ONEK.has(k)) {'//NL)
+      call sb_put(sb, '    if (e.a != null) { a = e.a | 0; b = PAIRK.has(k) ? e.b | 0 : 0; }'//NL)
+      call sb_put(sb, '    else { const R = realmsIn(e.text); a = R[0] ? R[0].id : 0; b = PAIRK.has(k) && R[1] ? R')
+      call sb_put(sb, '[1].id : 0; }'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  let title = BTITLE[k] || ''From the Chronicle'';'//NL)
-      call sb_put(sb, '  if (k === ''sanction'' && /lift|forgave|ended|opened/i.test(e.text)) title = ''Sanctions ')
-      call sb_put(sb, 'Lifted'';'//NL)
-      call sb_put(sb, '  return `<div class="bn ${TONE[k] || ''gold''}"><div class="bic">${ic}</div><div class="bt')
-      call sb_put(sb, '"><b>${esc(title)}</b>` +'//NL)
+      call sb_put(sb, '  return (e._ids = [a, b]);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function newsIcon(e) {'//NL)
+      call sb_put(sb, '  const k = e.kind, [a, b] = idsOf(e), A = a ? rOf(a) : null, B = b ? rOf(b) : null;'//NL)
+      call sb_put(sb, '  if (A && B) return armsImg(A) + `<i class="bx">${[''war'', ''holywar'', ''battle'', ''con')
+      call sb_put(sb, 'quest'', ''realm_fall''].includes(k) ?'//NL)
+      call sb_put(sb, '    icon(''i-swords'') : glyph(k)}</i>` + armsImg(B);'//NL)
+      call sb_put(sb, '  if (A) return armsImg(A) + (k === ''famine'' ? `<i class="bx fam">${icon(''i-famine'')}</')
+      call sb_put(sb, 'i>` : '''');'//NL)
+      call sb_put(sb, '  const f = TONE[k] === ''violet'' || k === ''holywar'' ? faithIn(e.text) : null;'//NL)
+      call sb_put(sb, '  return f ? flame(f.hue) : `<i class="bg">${glyph(k)}</i>`;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function titleOf(e) {'//NL)
+      call sb_put(sb, '  const k = e.kind, t = String(e.text || '''');'//NL)
+      call sb_put(sb, '  if (k === ''sanction'' && /lift|forgave|ended|opened/i.test(t)) return ''Sanctions Lifted')
+      call sb_put(sb, ''';'//NL)
+      call sb_put(sb, '  if (k === ''alliance'' && /broke|sunder|dissol|ended|renounc|forsw|abandon/i.test(t)) ret')
+      call sb_put(sb, 'urn ''An Alliance Broken'';'//NL)
+      call sb_put(sb, '  if (k === ''tradepact'' && /laps|ended|closed|broke|shut/i.test(t)) return ''A Pact Lapse')
+      call sb_put(sb, 's'';'//NL)
+      call sb_put(sb, '  return BTITLE[k] || ''From the Chronicle'';'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function bannerHTML(e) {                           // the great card'//NL)
+      call sb_put(sb, '  return `<div class="bn ep ${TONE[e.kind] || ''gold''}"><div class="bic">${newsIcon(e)}</d')
+      call sb_put(sb, 'iv><div class="bt"><b>${esc(titleOf(e))}</b>` +'//NL)
       call sb_put(sb, '    `<span>year ${Math.floor(e.year || 0)}</span></div><div class="bx2">${esc(trimText(e.te')
-      call sb_put(sb, 'xt, 150))}</div></div>`;'//NL)
+      call sb_put(sb, 'xt, 170))}</div></div>`;'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function bannerPush(e, now) {'//NL)
-      call sb_put(sb, '  BN.q.push(e);'//NL)
-      call sb_put(sb, '  while (BN.q.length > 3) BN.q.shift();'//NL)
-      call sb_put(sb, '  if (!BN.cur) bannerNext(now);'//NL)
+      call sb_put(sb, 'function newsHTML(q) {                             // a headline: arms, a title, one line, ')
+      call sb_put(sb, 'the year'//NL)
+      call sb_put(sb, '  const e = q.e;'//NL)
+      call sb_put(sb, '  return `<div class="bic">${newsIcon(e)}</div><div class="nwb"><div class="nwt"><b>${esc(t')
+      call sb_put(sb, 'itleOf(e))}</b>` +'//NL)
+      call sb_put(sb, '    `${q.n > 1 ? `<em>×${q.n}</em>` : ''''}<span>${Math.floor(e.year || 0)}</span></div><d')
+      call sb_put(sb, 'iv class="nwx">${esc(trimText(e.text, 200))}</div></div>`;'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function bannerNext(now) {'//NL)
-      call sb_put(sb, '  clearTimeout(BN.tm);'//NL)
-      call sb_put(sb, '  const b = $(''#banner''), e = BN.q.shift();'//NL)
-      call sb_put(sb, '  if (!e) { BN.cur = null; b.classList.remove(''on''); return; }'//NL)
-      call sb_put(sb, '  BN.cur = e; BN.t0 = performance.now();'//NL)
+      call sb_put(sb, '// the pace of the world: 0 calm (up to ×4), 1 brisk (×8, ×16), 2 fast (beyond, and deep')
+      call sb_put(sb, ' time)'//NL)
+      call sb_put(sb, 'const pace = () => { const y = yearsPerSec(); return y > 2.5 ? 2 : y > 0.6 ? 1 : 0; };'//NL)
+      call sb_put(sb, '// stale: older than a year and a half, or than the second or so the news takes to come'//NL)
+      call sb_put(sb, 'const stale = e => !!G.st && (G.st.year || 0) - (e.year || 0) > Math.max(1.5, 1.2 * yearsPe')
+      call sb_put(sb, 'rSec());'//NL)
+      call sb_put(sb, 'const PRIO = { war: 9, holywar: 9, realm_fall: 8, secede: 7, conquest: 7, revolution: 6, re')
+      call sb_put(sb, 'alm: 6, peace: 5, plague: 5,'//NL)
+      call sb_put(sb, '  titan: 5, faith: 4, schism: 4, legend: 3, meteor: 3, prophecy_kept: 3 };'//NL)
+      call sb_put(sb, 'const prio = e => loud(e) * 10 + (PRIO[e.kind] || 1);'//NL)
+      call sb_put(sb, 'const LOUD = new Set([''war'', ''holywar'', ''realm_fall'', ''secede'', ''conquest'', ''rev')
+      call sb_put(sb, 'olution'', ''titan'']);   // brisk: still headlines'//NL)
+      call sb_put(sb, 'function announce(e, force) {'//NL)
+      call sb_put(sb, '  if (!force && stale(e)) return;'//NL)
+      call sb_put(sb, '  const t = loud(e), lv = NEWS.lvl, p = pace();'//NL)
+      call sb_put(sb, '  if (t >= 3) return showCard(e);'//NL)
+      call sb_put(sb, '  if (force) { ping(e, 2); return headline(e, true); }'//NL)
+      call sb_put(sb, '  if (t === 2) {'//NL)
+      call sb_put(sb, '    if (lv === ''quiet'') return;'//NL)
+      call sb_put(sb, '    ping(e, 2);'//NL)
+      call sb_put(sb, '    if (p === 2 || (p === 1 && !LOUD.has(e.kind))) return digest(e);'//NL)
+      call sb_put(sb, '    return headline(e);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  if (t === 1 && p < 2 && (lv === ''all'' || (lv === ''head'' && isRealmy(e)))) ping(e, 1);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function showCard(e) {                             // a newer card replaces the old at once')
+      call sb_put(sb, ': never a queue of them'//NL)
+      call sb_put(sb, '  const b = $(''#banner'');'//NL)
+      call sb_put(sb, '  clearTimeout(NEWS.tm);'//NL)
+      call sb_put(sb, '  NEWS.card = e;'//NL)
       call sb_put(sb, '  b.innerHTML = bannerHTML(e);'//NL)
-      call sb_put(sb, '  b.classList.toggle(''now'', !!now);'//NL)
       call sb_put(sb, '  b.classList.add(''on'');'//NL)
-      call sb_put(sb, '  BN.tm = setTimeout(bannerEnd, 6000);'//NL)
+      call sb_put(sb, '  NEWS.tm = setTimeout(hideCard, pace() === 2 ? 4000 : 5200);'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, 'function bannerEnd() {'//NL)
-      call sb_put(sb, '  clearTimeout(BN.tm);'//NL)
+      call sb_put(sb, 'function hideCard() {'//NL)
+      call sb_put(sb, '  clearTimeout(NEWS.tm);'//NL)
+      call sb_put(sb, '  NEWS.card = null;'//NL)
       call sb_put(sb, '  $(''#banner'').classList.remove(''on'', ''now'');'//NL)
-      call sb_put(sb, '  BN.tm = setTimeout(() => { BN.cur = null; bannerNext(); }, 700);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function newsKey(e) {'//NL)
+      call sb_put(sb, '  const [a, b] = idsOf(e);'//NL)
+      call sb_put(sb, '  return a || b ? `${e.kind}:${Math.min(a, b)}:${Math.max(a, b)}` : e.kind + '':'' + e.text')
+      call sb_put(sb, ';'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function headline(e, force) {'//NL)
+      call sb_put(sb, '  const now = performance.now(), k = newsKey(e);'//NL)
+      call sb_put(sb, '  // the same story again within a little while: one headline, counted'//NL)
+      call sb_put(sb, '  const q = NEWS.items.find(o => o.k === k && now - o.t0 < 15000) || NEWS.wait.find(o => o.')
+      call sb_put(sb, 'k === k);'//NL)
+      call sb_put(sb, '  if (q) { q.n++; q.e = e; if (q.el) { fillItem(q); q.end = Math.max(q.end, now + 3500); } ')
+      call sb_put(sb, 'return; }'//NL)
+      call sb_put(sb, '  NEWS.wait.push({ e, k, n: 1, force });'//NL)
+      call sb_put(sb, '  NEWS.wait.sort((p, o) => prio(o.e) - prio(p.e));'//NL)
+      call sb_put(sb, '  while (NEWS.wait.length > 3) digest(NEWS.wait.pop().e);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// every frame: keep the stack to the plate''s lower left corner (clear of the great card a')
+      call sb_put(sb, 't the top),'//NL)
+      call sb_put(sb, '// hold it under the hand, let the old go, let the next in'//NL)
+      call sb_put(sb, 'function newsTick(now) {'//NL)
+      call sb_put(sb, '  const box = NEWS.el || (NEWS.el = $(''#news'')), st = $(''#stage'');'//NL)
+      call sb_put(sb, '  if (!box) return;'//NL)
+      call sb_put(sb, '  const at = G.px0 + '':'' + G.py0 + '':'' + G.pw + '':'' + G.ph + '':'' + (st ? st.clientH')
+      call sb_put(sb, 'eight : 0);'//NL)
+      call sb_put(sb, '  if (at !== NEWS.box) {'//NL)
+      call sb_put(sb, '    NEWS.box = at;'//NL)
+      call sb_put(sb, '    box.style.left = (G.px0 + 10) + ''px'';'//NL)
+      call sb_put(sb, '    box.style.bottom = Math.max(0, (st ? st.clientHeight : 0) - G.py0 - G.ph + 10) + ''px''')
+      call sb_put(sb, ';'//NL)
+      call sb_put(sb, '    box.style.width = Math.round(clamp(G.pw * 0.42, 190, 320)) + ''px'';'//NL)
+      call sb_put(sb, '    const l2 = $(''#legend2'');'//NL)
+      call sb_put(sb, '    if (l2) l2.classList.toggle(''tight'', G.pw < 1400);   // the key keeps only its marks'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  if (box.matches('':hover'')) for (const q of NEWS.items) q.end += now - (NEWS.tk || now);'//NL)
+      call sb_put(sb, '  NEWS.tk = now;'//NL)
+      call sb_put(sb, '  for (const q of NEWS.items.slice()) if (now > q.end) dropItem(q);'//NL)
+      call sb_put(sb, '  const p = pace();'//NL)
+      call sb_put(sb, '  while (NEWS.wait.length && now - NEWS.last >= (p ? 2600 : 1100)) {'//NL)
+      call sb_put(sb, '    const w = NEWS.wait.shift();'//NL)
+      call sb_put(sb, '    if (!w.force && (p === 2 || stale(w.e))) { digest(w.e); continue; }'//NL)
+      call sb_put(sb, '    admit(w, now, p);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  if (NEWS.dig && now - NEWS.dig.t > 7000) { NEWS.dig = null; drawDigest(); }'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function admit(w, now, p) {'//NL)
+      call sb_put(sb, '  NEWS.last = now;'//NL)
+      call sb_put(sb, '  const q = { e: w.e, k: w.k, n: w.n, t0: now, end: now + (p ? 5000 : 6500), el: document.c')
+      call sb_put(sb, 'reateElement(''div'') };'//NL)
+      call sb_put(sb, '  fillItem(q);'//NL)
+      call sb_put(sb, '  NEWS.el.insertBefore(q.el, NEWS.el.firstChild);'//NL)
+      call sb_put(sb, '  NEWS.items.unshift(q);'//NL)
+      call sb_put(sb, '  while (NEWS.items.length > 3) dropItem(NEWS.items[NEWS.items.length - 1]);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function fillItem(q) {'//NL)
+      call sb_put(sb, '  q.el.className = ''nw '' + (TONE[q.e.kind] || ''gold'');'//NL)
+      call sb_put(sb, '  q.el.innerHTML = newsHTML(q);'//NL)
+      call sb_put(sb, '  q.el.dataset.tip = titleOf(q.e) + ''|'' + String(q.e.text || '''').replace(/\|/g, ''/'');'//NL)
+      call sb_put(sb, '  q.el._q = q;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function dropItem(q) {'//NL)
+      call sb_put(sb, '  const k = NEWS.items.indexOf(q), el = q.el;'//NL)
+      call sb_put(sb, '  if (k >= 0) NEWS.items.splice(k, 1);'//NL)
+      call sb_put(sb, '  if (NEWS.hot === q) NEWS.hot = null;'//NL)
+      call sb_put(sb, '  q.el = null;'//NL)
+      call sb_put(sb, '  if (!el) return;'//NL)
+      call sb_put(sb, '  if (tipEl && el.contains(tipEl)) { clearTimeout(tipT); tipbox().classList.remove(''on'');')
+      call sb_put(sb, ' tipEl = null; }'//NL)
+      call sb_put(sb, '  el.classList.add(''out'');'//NL)
+      call sb_put(sb, '  setTimeout(() => el.remove(), 330);'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// at a great pace the headlines are gathered into one line: the years, and what befell in ')
+      call sb_put(sb, 'them'//NL)
+      call sb_put(sb, 'const DIGW = { war: [''war declared'', ''wars declared''], holywar: [''holy war'', ''holy w')
+      call sb_put(sb, 'ars''], peace: [''peace made'', ''peaces made''],'//NL)
+      call sb_put(sb, '  realm: [''realm founded'', ''realms founded''], realm_fall: [''realm fell'', ''realms fel')
+      call sb_put(sb, 'l''], secede: [''secession'', ''secessions''],'//NL)
+      call sb_put(sb, '  revolution: [''revolution'', ''revolutions''], conquest: [''capital taken'', ''capitals t')
+      call sb_put(sb, 'aken''], plague: [''plague'', ''plagues''],'//NL)
+      call sb_put(sb, '  faith: [''faith born'', ''faiths born''], schism: [''schism'', ''schisms''], titan: [''Ti')
+      call sb_put(sb, 'tan woke'', ''Titans woke''],'//NL)
+      call sb_put(sb, '  meteor: [''star fell'', ''stars fell''] };'//NL)
+      call sb_put(sb, 'function digest(e) {'//NL)
+      call sb_put(sb, '  const now = performance.now(), y = e.year || 0;'//NL)
+      call sb_put(sb, '  let d = NEWS.dig;'//NL)
+      call sb_put(sb, '  if (!d || now - d.t > 7000) d = NEWS.dig = { c: new Map(), y0: y, y1: y, t: now };'//NL)
+      call sb_put(sb, '  d.c.set(e.kind, (d.c.get(e.kind) || 0) + 1);'//NL)
+      call sb_put(sb, '  d.t = now; d.y0 = Math.min(d.y0, y); d.y1 = Math.max(d.y1, y);'//NL)
+      call sb_put(sb, '  drawDigest();'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function drawDigest() {'//NL)
+      call sb_put(sb, '  const box = NEWS.el || (NEWS.el = $(''#news''));'//NL)
+      call sb_put(sb, '  if (!box) return;'//NL)
+      call sb_put(sb, '  let el = box.querySelector(''.nwd'');'//NL)
+      call sb_put(sb, '  if (!el) {'//NL)
+      call sb_put(sb, '    el = document.createElement(''div''); el.className = ''nwd off'';'//NL)
+      call sb_put(sb, '    el.dataset.tip = ''The digest|At this pace the headlines are gathered here. Click to re')
+      call sb_put(sb, 'ad them all in the Chronicle.'';'//NL)
+      call sb_put(sb, '    box.appendChild(el);'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const d = NEWS.dig;'//NL)
+      call sb_put(sb, '  if (!d) { el.classList.add(''off''); return; }'//NL)
+      call sb_put(sb, '  const parts = [...d.c].sort((p, q) => q[1] - p[1]).slice(0, 4).map(([k, n]) => {'//NL)
+      call sb_put(sb, '    const t = String(BTITLE[k] || k).toLowerCase(), w = DIGW[k] || [t, t];'//NL)
+      call sb_put(sb, '    return `<b>${n}</b> ${esc(w[n === 1 ? 0 : 1])}`;'//NL)
+      call sb_put(sb, '  });'//NL)
+      call sb_put(sb, '  const y0 = Math.floor(d.y0), y1 = Math.floor(d.y1);'//NL)
+      call sb_put(sb, '  el.innerHTML = `${y0 === y1 ? ''Year '' + y0 : `Years ${y0}–${y1}`}: ${parts.join('' ·')
+      call sb_put(sb, ' '')}`;'//NL)
+      call sb_put(sb, '  el.classList.remove(''off'');'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, '// a mark on the map: only where the reader is looking, and never too many at once'//NL)
+      call sb_put(sb, 'const TONEC = { red: ''#f08c70'', ochre: ''#eaa650'', green: ''#a9d18e'', violet: ''#c9b1f5')
+      call sb_put(sb, ''', gold: ''#f0cf8e'' };'//NL)
+      call sb_put(sb, 'function ping(e, t) {'//NL)
+      call sb_put(sb, '  if (!(e.x || e.y) || G.view === 9 || !c2s(e.x, e.y)) return;'//NL)
+      call sb_put(sb, '  const now = performance.now();'//NL)
+      call sb_put(sb, '  if (PING.some(q => q.x === e.x && q.y === e.y && now - q.t0 < 3000)) return;'//NL)
+      call sb_put(sb, '  PING.push({ x: e.x, y: e.y, t0: now, t, life: t >= 2 ? 6000 : 4200, g: glyph(e.kind), s: ')
+      call sb_put(sb, 'pingText(e),'//NL)
+      call sb_put(sb, '    c: TONEC[TONE[e.kind]] || TONEC.gold });'//NL)
+      call sb_put(sb, '  const cap = pace() ? 3 : NEWS.lvl === ''all'' ? 6 : 4;'//NL)
+      call sb_put(sb, '  while (PING.length > cap) { const k = PING.findIndex(q => q.t < 2); PING.splice(k >= 0 ? ')
+      call sb_put(sb, 'k : 0, 1); }'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function pingText(e) {'//NL)
+      call sb_put(sb, '  const [a, b] = idsOf(e), A = a ? rOf(a) : null, B = b ? rOf(b) : null, nm = m => trimText')
+      call sb_put(sb, '(m.name, 14);'//NL)
+      call sb_put(sb, '  const t = titleOf(e).replace(/^(A|An|The) /, ''''), who = A && B ? `${nm(A)} – ${nm(B)}')
+      call sb_put(sb, '` : A ? nm(A) : '''';'//NL)
+      call sb_put(sb, '  return who ? `${t} · ${who}` : t;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function bannerPush(e, now) {                      // tell this one at once, whatever its a')
+      call sb_put(sb, 'ge'//NL)
+      call sb_put(sb, '  announce(e, true);'//NL)
+      call sb_put(sb, '  newsTick(performance.now());'//NL)
+      call sb_put(sb, '  if (now) $(''#banner'').classList.add(''now'');'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function bannerEnd() {                             // Esc, or a click on the card: put away')
+      call sb_put(sb, ' everything showing'//NL)
+      call sb_put(sb, '  hideCard();'//NL)
+      call sb_put(sb, '  for (const q of NEWS.items.slice()) dropItem(q);'//NL)
+      call sb_put(sb, '  NEWS.wait = []; NEWS.dig = null; NEWS.last = -1e9; drawDigest();'//NL)
+      call sb_put(sb, '  PING.length = 0; BAT.length = 0;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function setAlerts(v) {'//NL)
+      call sb_put(sb, '  NEWS.lvl = v;'//NL)
+      call sb_put(sb, '  try { localStorage.setItem(''rl.alerts'', v); } catch (e) { /* no storage */ }'//NL)
+      call sb_put(sb, '  if (v === ''quiet'') { for (const q of NEWS.items.slice()) dropItem(q); NEWS.wait = []; P')
+      call sb_put(sb, 'ING.length = 0; }'//NL)
+      call sb_put(sb, '  toast(`<b>Alerts · ${esc(ALERTS[v][0])}</b> · ${esc(ALERTS[v][1])}`, 2600);'//NL)
+      call sb_put(sb, '  renderLegend2();'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, '// what the Chronicle has just written: banners for the great, rings for the battles'//NL)
       call sb_put(sb, 'const YR = { t: 0, y: 0, rate: 0 };'//NL)
@@ -25910,12 +27908,19 @@ contains
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'const yearsPerSec = () => G.paused ? 0 : G.deep ? (YR.rate || 4) : (G.tpf || 1) / 8;'//NL)
       call sb_put(sb, 'function freshEntries(list, st) {'//NL)
-      call sb_put(sb, '  const now = performance.now(), yps = yearsPerSec();'//NL)
-      call sb_put(sb, '  for (const e of list.slice().sort((a, b) => a.id - b.id)) {'//NL)
-      call sb_put(sb, '    const age = yps > 0 ? Math.max(0, ((st && st.year) || 0) - (e.year || 0)) / yps : 0;'//NL)
-      call sb_put(sb, '    if (e.kind === ''battle'' && (e.x || e.y) && age <= 8) battleSeen(e, now);'//NL)
-      call sb_put(sb, '    if (isBanner(e) && age <= 40) bannerPush(e);'//NL)
+      call sb_put(sb, '  const now = performance.now();'//NL)
+      call sb_put(sb, '  // the lesser first and the greatest last, so that the greater card is the one left showi')
+      call sb_put(sb, 'ng'//NL)
+      call sb_put(sb, '  for (const e of list.slice().sort((a, b) => prio(a) - prio(b) || a.id - b.id)) {'//NL)
+      call sb_put(sb, '    if (e.kind === ''battle'') {'//NL)
+      call sb_put(sb, '      if ((e.x || e.y) && NEWS.lvl !== ''quiet'' && pace() < 2 && !stale(e)) battleSeen(e, ')
+      call sb_put(sb, 'now);'//NL)
+      call sb_put(sb, '      continue;'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '    announce(e);'//NL)
       call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  newsTick(now);                                   // the gravest of those waiting goes fir')
+      call sb_put(sb, 'st'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
       call sb_put(sb, '// ===================================================================== the overlay switch')
@@ -25954,12 +27959,13 @@ contains
       call sb_put(sb, '  if (!quiet && (!WX[k] || k === ''realms'')) {      // the reader''s own choice is remembe')
       call sb_put(sb, 'red'//NL)
       call sb_put(sb, '    try { localStorage.setItem(''rl.ov'', JSON.stringify({ realms: OV.realms, trade: OV.tra')
-      call sb_put(sb, 'de, wars: OV.wars, faiths: OV.faiths })); } catch (e) { /* */ }'//NL)
+      call sb_put(sb, 'de, wars: OV.wars, borders: OV.borders, faiths: OV.faiths })); } catch (e) { /* */ }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  if (!quiet) {'//NL)
       call sb_put(sb, '    const T = { realms: ''the realms’ names and arms'', trade: ''the caravans and embargo')
-      call sb_put(sb, 'es'', wars: ''the wars and battles'','//NL)
-      call sb_put(sb, '      faiths: ''the holy sites'', weather: ''the clouds'', night: ''the night side'' };'//NL)
+      call sb_put(sb, 'es'', wars: ''the wars at their fronts'','//NL)
+      call sb_put(sb, '      borders: ''the medallions on the realms’ borders'', faiths: ''the holy sites'', wea')
+      call sb_put(sb, 'ther: ''the clouds'', night: ''the night side'' };'//NL)
       call sb_put(sb, '    toast(`<b>${esc(cap1(k))}</b> · ${on ? ''showing'' : ''hiding''} ${T[k]}.`, 1500);'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  G.placeKey = '''';'//NL)
@@ -25998,7 +28004,46 @@ contains
       call sb_put(sb, '  emb: ''<svg class="ks w" viewBox="0 0 24 14"><path d="M2 11Q12 2 22 11" fill="none" strok')
       call sb_put(sb, 'e="#e05a44" stroke-width="1.3" stroke-dasharray="3 2.4"/>'' +'//NL)
       call sb_put(sb, '    ''<circle cx="12" cy="6.6" r="3.9" fill="#b8352b" stroke="#ffe2d6" stroke-width=".8"/><')
-      call sb_put(sb, 'path d="M9.7 6.6h4.6" stroke="#fff" stroke-width="1.3"/></svg>'''//NL)
+      call sb_put(sb, 'path d="M9.7 6.6h4.6" stroke="#fff" stroke-width="1.3"/></svg>'','//NL)
+      call sb_put(sb, '  front: ''<svg class="ks w" viewBox="0 0 24 16"><circle cx="12" cy="6" r="5.3" fill="#a530')
+      call sb_put(sb, '2a" stroke="#ffd9c8" stroke-width=".8"/>'' +'//NL)
+      call sb_put(sb, '    ''<path d="M9.7 3.7l4.6 4.6M14.3 3.7l-4.6 4.6" stroke="#fff1e0" stroke-width="1.1" stro')
+      call sb_put(sb, 'ke-linecap="round"/>'' +'//NL)
+      call sb_put(sb, '    ''<rect x="2.5" y="12.4" width="19" height="3.4" fill="#05070c"/><rect x="3.6" y="13.2"')
+      call sb_put(sb, ' width="3" height="1.8" fill="#e8c35a"/>'' +'//NL)
+      call sb_put(sb, '    ''<rect x="7.6" y="13.2" width="3" height="1.8" fill="#e8c35a"/><rect x="13.4" y="13.2"')
+      call sb_put(sb, ' width="3" height="1.8" fill="#4a4538"/>'' +'//NL)
+      call sb_put(sb, '    ''<rect x="17.4" y="13.2" width="3" height="1.8" fill="#4a4538"/><rect x="11.6" y="12.4')
+      call sb_put(sb, '" width=".8" height="3.4" fill="#f0cf8e"/></svg>'','//NL)
+      call sb_put(sb, '  rings: ''<svg class="i" viewBox="0 0 24 24"><circle cx="9" cy="12" r="5"/><circle cx="15"')
+      call sb_put(sb, ' cy="12" r="5"/></svg>'','//NL)
+      call sb_put(sb, '  bell: ''<svg class="i" viewBox="0 0 24 24"><path d="M6.5 16.5v-5a5.5 5.5 0 0 1 11 0v5l1.5')
+      call sb_put(sb, ' 2h-14zM10 20.5a2 2 0 0 0 4 0"/></svg>'''//NL)
+      call sb_put(sb, '};'//NL)
+      call sb_put(sb, '// the medallions of the borders, as on the map, for the key, the lists and the cards'//NL)
+      call sb_put(sb, 'const MEDSVG = {'//NL)
+      call sb_put(sb, '  war: ''<svg class="ks" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#7a1d14" s')
+      call sb_put(sb, 'troke="#ED331F"/>'' +'//NL)
+      call sb_put(sb, '    ''<path d="M5.2 5.2l5.6 5.6M10.8 5.2l-5.6 5.6" stroke="#fff3e6" stroke-width="1.4" stro')
+      call sb_put(sb, 'ke-linecap="round"/></svg>'','//NL)
+      call sb_put(sb, '  tense: ''<svg class="ks" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#5c3510"')
+      call sb_put(sb, ' stroke="#F0A030"/>'' +'//NL)
+      call sb_put(sb, '    ''<path d="M8 4.4v4.4" stroke="#fff1d6" stroke-width="1.7" stroke-linecap="round"/><cir')
+      call sb_put(sb, 'cle cx="8" cy="11.2" r="1" fill="#fff1d6"/></svg>'','//NL)
+      call sb_put(sb, '  truce: ''<svg class="ks" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#2b303b"')
+      call sb_put(sb, ' stroke="#F2F2F2"/>'' +'//NL)
+      call sb_put(sb, '    ''<path d="M5.8 12V4" stroke="#F2F2F2" stroke-width="1.1" stroke-linecap="round"/><path')
+      call sb_put(sb, ' d="M5.8 4.2q2.6-1 5.2.3v3.3q-2.6-1.1-5.2-.2z" fill="#F2F2F2"/></svg>'','//NL)
+      call sb_put(sb, '  ally: ''<svg class="ks" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#3d2f10" ')
+      call sb_put(sb, 'stroke="#E8C35A"/>'' +'//NL)
+      call sb_put(sb, '    ''<circle cx="6.3" cy="8" r="2.6" fill="none" stroke="#E8C35A" stroke-width="1.3"/><cir')
+      call sb_put(sb, 'cle cx="9.7" cy="8" r="2.6" fill="none" stroke="#E8C35A" stroke-width="1.3"/></svg>'','//NL)
+      call sb_put(sb, '  pact: ''<svg class="ks" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="#0e3634" ')
+      call sb_put(sb, 'stroke="#3FB8AF"/>'' +'//NL)
+      call sb_put(sb, '    ''<circle cx="8" cy="8" r="3.6" fill="#3FB8AF"/><rect x="6.9" y="6.9" width="2.2" heigh')
+      call sb_put(sb, 't="2.2" fill="#0b1c1b"/></svg>'','//NL)
+      call sb_put(sb, '  peace: ''<svg class="ks" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stro')
+      call sb_put(sb, 'ke="rgba(233,220,192,.4)" stroke-dasharray="2 2"/></svg>'''//NL)
       call sb_put(sb, '};'//NL)
       call sb_put(sb, 'function renderLegend2() {'//NL)
       call sb_put(sb, '  const L = $(''#legend2'');'//NL)
@@ -26007,8 +28052,14 @@ contains
       call sb_put(sb, 'ds, their arms at the capitals, and the marks of war and famine.''],'//NL)
       call sb_put(sb, '    [''trade'', ''i-arcs'', ''Trade'', ''The twelve greatest caravans, from seller to buyer')
       call sb_put(sb, ', coloured by their good; red dashes are embargoes.''],'//NL)
-      call sb_put(sb, '    [''wars'', ''i-swords'', ''Wars'', ''A red thread between two realms at war, a badge on')
-      call sb_put(sb, ' the front, and a ring where a battle is fought.''],'//NL)
+      call sb_put(sb, '    [''wars'', ''i-swords'', ''Wars'', ''A badge on the front of every war, with its tug of')
+      call sb_put(sb, ' war: the pips fill toward the side that is winning, and a full row takes a region. It flar')
+      call sb_put(sb, 'es when a battle is fought. A thread joins the capitals only for the realm in focus, or a w')
+      call sb_put(sb, 'ar with no border.''],'//NL)
+      call sb_put(sb, '    [''borders'', KEYSVG.rings, ''Borders'', ''A medallion on every shared border that matt')
+      call sb_put(sb, 'ers: crossed swords at war, a white flag for a truce, linked gold rings for allies, a teal ')
+      call sb_put(sb, 'coin for a trade pact, an amber ! where neighbours hate each other. Hover over one for its ')
+      call sb_put(sb, 'story; click it to go there.''],'//NL)
       call sb_put(sb, '    [''faiths'', ''i-faiths'', ''Faiths'', ''The holy sites of the living faiths, and the p')
       call sb_put(sb, 'laces where a prophecy awaits the Hand.''],'//NL)
       call sb_put(sb, '    [''weather'', ''i-cloud'', ''Weather'', ''The clouds and the storms over the map. Off, ')
@@ -26020,17 +28071,30 @@ contains
       call sb_put(sb, '    const na = (k === ''weather'' || k === ''night'') && WXHAVE[k] === false;'//NL)
       call sb_put(sb, '    h += `<button class="ot${OV[k] ? '' on'' : ''''}${na ? '' na'' : ''''}" data-o="${k}" d')
       call sb_put(sb, 'ata-tip="${nm}|${na ? ''This world has no such law.'' : tp}">` +'//NL)
-      call sb_put(sb, '      `${icon(ic)}<span>${nm}</span></button>`;'//NL)
+      call sb_put(sb, '      `${ic[0] === ''<'' ? ic : icon(ic)}<span>${nm}</span></button>`;'//NL)
       call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const al = ALERTS[NEWS.lvl];'//NL)
+      call sb_put(sb, '  h += `<button class="ot al${NEWS.lvl === ''quiet'' ? '''' : '' on''}" data-al="1" data-ti')
+      call sb_put(sb, 'p="Alerts: ${al[0]}|${al[1]} ` +'//NL)
+      call sb_put(sb, '    `A click changes it: headlines, all alerts, quiet. Esc puts away whatever is showing.">')
+      call sb_put(sb, '${KEYSVG.bell}<span>${al[0]}</span></button>`;'//NL)
       call sb_put(sb, '  h += ''</div><div class="key"><span class="lb">Key</span>'' +'//NL)
       call sb_put(sb, '    `<span class="kk" data-tip="A capital|The arms of a realm mark its capital; its name li')
       call sb_put(sb, 'es at the heart of its land, sized by its land.">` +'//NL)
       call sb_put(sb, '    `${armsImg({ id: 0, name: ''the key'', hue: 48, gov: ''kingdom'', arms: 11 }, ''k'')}ca')
       call sb_put(sb, 'pital</span>` +'//NL)
-      call sb_put(sb, '    `<span class="kk" data-tip="A war|A red thread joins two realms at war; the badge marks')
-      call sb_put(sb, ' the middle of the front. Hover over it for the tally.">${KEYSVG.war}war</span>` +'//NL)
+      call sb_put(sb, '    `<span class="kk" data-tip="A war, at its front|The badge stands on the front. Under it')
+      call sb_put(sb, ' the tug of war: pips fill from the middle toward the side that is winning, and a full row ')
+      call sb_put(sb, '(three wins running, five for a capital) takes a region. It flares when a battle is fought.')
+      call sb_put(sb, ' Hover over it for the tally.">${KEYSVG.front}war</span>` +'//NL)
       call sb_put(sb, '    `<span class="kk" data-tip="A battle|A soft ring where a battle has just been fought, a')
       call sb_put(sb, 'nd the count of the slain.">${KEYSVG.battle}battle</span>` +'//NL)
+      call sb_put(sb, '    `<span class="kk kb" data-tip="The borders|How two neighbours stand, on the border they')
+      call sb_put(sb, ' share (and in the colour of that border): crossed swords, war; a white flag, a truce; gold')
+      call sb_put(sb, ' rings, allies; a teal coin, a trade pact; an amber !, a tense border where war may come.">')
+      call sb_put(sb, '` +'//NL)
+      call sb_put(sb, '    `${[''war'', ''truce'', ''ally'', ''pact'', ''tense''].map(k => MEDSVG[k]).join('''')}<')
+      call sb_put(sb, 'span>borders</span></span>` +'//NL)
       call sb_put(sb, '    `<span class="kk" data-tip="A caravan|An arc from seller to buyer, as wide as the trade')
       call sb_put(sb, ' and coloured by its good: grain gold, timber brown, stone grey, salt white, furs russet, s')
       call sb_put(sb, 'pice red.">${KEYSVG.arc}caravan</span>` +'//NL)
@@ -26043,87 +28107,122 @@ contains
       call sb_put(sb, 'function bindLegend2() {'//NL)
       call sb_put(sb, '  $(''#legend2'').addEventListener(''click'', ev => {'//NL)
       call sb_put(sb, '    const b = ev.target.closest(''.ot'');'//NL)
-      call sb_put(sb, '    if (b && !b.classList.contains(''na'')) setOV(b.dataset.o, !OV[b.dataset.o]);'//NL)
+      call sb_put(sb, '    if (!b || b.classList.contains(''na'')) return;'//NL)
+      call sb_put(sb, '    if (b.dataset.al) setAlerts(ALK[(ALK.indexOf(NEWS.lvl) + 1) % ALK.length]);'//NL)
+      call sb_put(sb, '    else setOV(b.dataset.o, !OV[b.dataset.o]);'//NL)
       call sb_put(sb, '  });'//NL)
       call sb_put(sb, '  $(''#banner'').addEventListener(''click'', () => bannerEnd());'//NL)
+      call sb_put(sb, '  // a headline: to its place, and the realm it names pinned; the digest: to the Chronicle'//NL)
+      call sb_put(sb, '  const nb = $(''#news'');'//NL)
+      call sb_put(sb, '  nb.addEventListener(''click'', ev => {'//NL)
+      call sb_put(sb, '    if (ev.target.closest(''.nwd'')) { NEWS.dig = null; drawDigest(); setPage(''chron''); r')
+      call sb_put(sb, 'eturn; }'//NL)
+      call sb_put(sb, '    const el = ev.target.closest(''.nw''), q = el && el._q;'//NL)
+      call sb_put(sb, '    if (!q) return;'//NL)
+      call sb_put(sb, '    const e = q.e, a = idsOf(e)[0], m = a ? rOf(a) : null;'//NL)
+      call sb_put(sb, '    if (e.x || e.y) pointTo(e.x, e.y);'//NL)
+      call sb_put(sb, '    if (m && !m.fallen) pinRealm(a);'//NL)
+      call sb_put(sb, '    dropItem(q);'//NL)
+      call sb_put(sb, '  });'//NL)
+      call sb_put(sb, '  nb.addEventListener(''mouseover'', ev => { const el = ev.target.closest(''.nw''); NEWS.ho')
+      call sb_put(sb, 't = el && el._q ? el._q : null; });'//NL)
+      call sb_put(sb, '  nb.addEventListener(''mouseleave'', () => { NEWS.hot = null; });'//NL)
+      call sb_put(sb, '  // a click on a medallion or a war badge goes to it (and the Hand''s click pins the realm')
+      call sb_put(sb, ' beneath)'//NL)
+      call sb_put(sb, '  const pl = $(''#plate'');'//NL)
+      call sb_put(sb, '  let down = null;'//NL)
+      call sb_put(sb, '  pl.addEventListener(''mousedown'', ev => { down = [ev.clientX, ev.clientY]; });'//NL)
+      call sb_put(sb, '  pl.addEventListener(''click'', ev => {'//NL)
+      call sb_put(sb, '    const hh = G.hoverHit, o = hh && (hh.type === ''border'' ? hh.bd : hh.type === ''war'' ')
+      call sb_put(sb, '? hh.war : null);'//NL)
+      call sb_put(sb, '    if (!o || G.tool !== ''inspect'' || !down || Math.hypot(ev.clientX - down[0], ev.client')
+      call sb_put(sb, 'Y - down[1]) > 5) return;'//NL)
+      call sb_put(sb, '    if (o.x || o.y) pointTo(o.x, o.y);'//NL)
+      call sb_put(sb, '  });'//NL)
       call sb_put(sb, '}'//NL)
-      call sb_put(sb, NL)
       call sb_put(sb, '// ===================================================================== the web of realms ')
       call sb_put(sb, '(Realms tab)'//NL)
+      call sb_put(sb, '// the chosen realm in the middle and its bonds around it, each realm where it lies from th')
+      call sb_put(sb, 'e middle'//NL)
+      call sb_put(sb, '// (north up), spread a little where they crowd; the line is how the two stand'//NL)
       call sb_put(sb, 'function drawWeb(cv, s) {'//NL)
       call sb_put(sb, '  const d = G.dpr, W = cv.width = Math.round(cv.clientWidth * d), H = cv.height = Math.roun')
       call sb_put(sb, 'd(cv.clientHeight * d);'//NL)
-      call sb_put(sb, '  if (W < 20 || H < 20) return;'//NL)
-      call sb_put(sb, '  const ctx = cv.getContext(''2d''), R = s.realms.slice().sort((a, b) => ((capOf(a) || {}).')
-      call sb_put(sb, 'x || 0) - ((capOf(b) || {}).x || 0));'//NL)
-      call sb_put(sb, '  const n = R.length;'//NL)
-      call sb_put(sb, '  if (!n) return;'//NL)
-      call sb_put(sb, '  const cx = W / 2, cy = H / 2 + 2 * d, rad = Math.max(20 * d, Math.min(W / 2 - 74 * d, H /')
-      call sb_put(sb, ' 2 - 26 * d)), pos = new Map();'//NL)
-      call sb_put(sb, '  R.forEach((m, k) => { const a = -Math.PI / 2 + 2 * Math.PI * k / n; pos.set(m.id, [cx + r')
-      call sb_put(sb, 'ad * Math.cos(a), cy + rad * Math.sin(a), a]); });'//NL)
-      call sb_put(sb, '  const fo = focusOf() || G.selRealm;'//NL)
-      call sb_put(sb, '  const edge = (a, b, col, lw, dash) => {'//NL)
-      call sb_put(sb, '    const p = pos.get(a), q = pos.get(b);'//NL)
-      call sb_put(sb, '    if (!p || !q) return null;'//NL)
-      call sb_put(sb, '    const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2, c = [mx + (cx - mx) * 0.38, my + ')
-      call sb_put(sb, '(cy - my) * 0.38];'//NL)
-      call sb_put(sb, '    ctx.globalAlpha = !fo || a === fo || b === fo ? 1 : 0.3;'//NL)
-      call sb_put(sb, '    ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.quadraticCurveTo(c[0], c[1], q[0], q[1]);'//NL)
-      call sb_put(sb, '    ctx.strokeStyle = col; ctx.lineWidth = lw * d; ctx.setLineDash(dash ? dash.map(v => v *')
-      call sb_put(sb, ' d) : []); ctx.stroke(); ctx.setLineDash([]);'//NL)
-      call sb_put(sb, '    return [0.25 * p[0] + 0.5 * c[0] + 0.25 * q[0], 0.25 * p[1] + 0.5 * c[1] + 0.25 * q[1]]')
-      call sb_put(sb, ';'//NL)
-      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  cv._pos = new Map(); cv._d = d;'//NL)
+      call sb_put(sb, '  const m0 = rOf(cv._sel), c0 = capOf(m0) || heartOf(m0);'//NL)
+      call sb_put(sb, '  if (W < 20 || H < 20 || !m0 || !c0) return;'//NL)
+      call sb_put(sb, '  const ctx = cv.getContext(''2d''), cx = W / 2, cy = H / 2 + 2 * d, rad = Math.max(24 * d,')
+      call sb_put(sb, ' Math.min(W / 2 - 66 * d, H / 2 - 22 * d));'//NL)
+      call sb_put(sb, '  const P = (cv._rel || []).slice(0, 18).map(r => {'//NL)
+      call sb_put(sb, '    const m = rOf(r.id), c = capOf(m) || heartOf(m) || c0;'//NL)
+      call sb_put(sb, '    return { r, m, a: Math.atan2(-(c.y - c0.y), c.x - c0.x) };'//NL)
+      call sb_put(sb, '  }).filter(p => p.m).sort((p, q) => p.a - q.a);'//NL)
+      call sb_put(sb, '  const n = P.length, gap = Math.min(0.6, 2 * Math.PI / Math.max(1, n) * 0.85);'//NL)
+      call sb_put(sb, '  for (let it = 0; it < 60 && n > 1; it++) {'//NL)
+      call sb_put(sb, '    let moved = false;'//NL)
+      call sb_put(sb, '    for (let k = 0; k < n; k++) {'//NL)
+      call sb_put(sb, '      const p = P[k], q = P[(k + 1) % n], da = q.a - p.a + (k === n - 1 ? 2 * Math.PI : 0);'//NL)
+      call sb_put(sb, '      if (da < gap - 1e-3) { const e = (gap - da) / 2; p.a -= e; q.a += e; moved = true; }'//NL)
+      call sb_put(sb, '    }'//NL)
+      call sb_put(sb, '    if (!moved) break;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const STY = { war: [RELC.war, 2.6, []], truce: [RELC.truce, 1.5, [2, 3]], tense: [RELC.te')
+      call sb_put(sb, 'nse, 1.6, [5, 3]],'//NL)
+      call sb_put(sb, '    ally: [RELC.ally, 2.2, []], pact: [RELC.pact, 1.8, [1.5, 3]], peace: [''rgba(233,220,19')
+      call sb_put(sb, '2,.3)'', 1, []] };'//NL)
       call sb_put(sb, '  ctx.lineCap = ''round'';'//NL)
       call sb_put(sb, '  ctx.strokeStyle = ''rgba(216,166,87,.12)''; ctx.lineWidth = d; ctx.setLineDash([2 * d, 4 ')
       call sb_put(sb, '* d]);'//NL)
       call sb_put(sb, '  ctx.beginPath(); ctx.arc(cx, cy, rad, 0, 7); ctx.stroke(); ctx.setLineDash([]);'//NL)
-      call sb_put(sb, '  const vol = new Map();'//NL)
-      call sb_put(sb, '  for (const f of s.flows || []) { const k = pair(f.from, f.to); vol.set(k, (vol.get(k) || ')
-      call sb_put(sb, '0) + (f.vol || 0) * (f.price || 1)); }'//NL)
-      call sb_put(sb, '  const vmax = Math.max(1, ...vol.values());'//NL)
-      call sb_put(sb, '  for (const [k, v] of vol) { const [a, b] = k.split('':'').map(Number); edge(a, b, ''rgba(')
-      call sb_put(sb, '216,166,87,.26)'', 0.7 + 5 * Math.sqrt(v / vmax)); }'//NL)
-      call sb_put(sb, '  for (const p of s.pacts || []) edge(p[0], p[1], ''rgba(236,196,116,.9)'', 1.3, [4, 3]);'//NL)
-      call sb_put(sb, '  for (const p of s.alliances || []) edge(p[0], p[1], ''#8cc474'', 1.9);'//NL)
-      call sb_put(sb, '  for (const w of s.wars || []) {'//NL)
-      call sb_put(sb, '    const m = edge(w.a, w.b, ''#e0644a'', 2.4);'//NL)
-      call sb_put(sb, '    if (m && SWORDS) {'//NL)
-      call sb_put(sb, '      ctx.globalAlpha = !fo || w.a === fo || w.b === fo ? 1 : 0.3;'//NL)
-      call sb_put(sb, '      ctx.fillStyle = ''#0d111c''; ctx.beginPath(); ctx.arc(m[0], m[1], 8 * d, 0, 7); ctx.f')
-      call sb_put(sb, 'ill();'//NL)
-      call sb_put(sb, '      ctx.strokeStyle = ''#e0644a''; ctx.lineWidth = d; ctx.stroke();'//NL)
-      call sb_put(sb, '      ctx.save(); ctx.translate(m[0] - 5.4 * d, m[1] - 5.4 * d); ctx.scale(0.45 * d, 0.45 *')
-      call sb_put(sb, ' d);'//NL)
+      call sb_put(sb, '  ctx.fillStyle = ''rgba(216,166,87,.55)''; ctx.font = `${9 * d}px ${SERIF}`; ctx.textAlign')
+      call sb_put(sb, ' = ''center''; ctx.textBaseline = ''middle'';'//NL)
+      call sb_put(sb, '  ctx.fillText(''N'', cx, cy - rad - 9 * d);'//NL)
+      call sb_put(sb, '  for (const p of P) {'//NL)
+      call sb_put(sb, '    p.x = cx + rad * Math.cos(p.a); p.y = cy + rad * Math.sin(p.a);'//NL)
+      call sb_put(sb, '    const [col, lw, dash] = STY[p.r.st] || STY.peace;'//NL)
+      call sb_put(sb, '    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(p.x, p.y);'//NL)
+      call sb_put(sb, '    ctx.strokeStyle = col; ctx.lineWidth = lw * d; ctx.setLineDash(dash.map(v => v * d)); c')
+      call sb_put(sb, 'tx.stroke(); ctx.setLineDash([]);'//NL)
+      call sb_put(sb, '    if (p.r.st === ''war'' && SWORDS) {'//NL)
+      call sb_put(sb, '      const mx = (cx + p.x) / 2, my = (cy + p.y) / 2;'//NL)
+      call sb_put(sb, '      ctx.fillStyle = ''#0d111c''; ctx.beginPath(); ctx.arc(mx, my, 8 * d, 0, 7); ctx.fill(')
+      call sb_put(sb, ');'//NL)
+      call sb_put(sb, '      ctx.strokeStyle = RELC.war; ctx.lineWidth = d; ctx.stroke();'//NL)
+      call sb_put(sb, '      ctx.save(); ctx.translate(mx - 5.4 * d, my - 5.4 * d); ctx.scale(0.45 * d, 0.45 * d);'//NL)
       call sb_put(sb, '      ctx.strokeStyle = ''#ffd9c8''; ctx.lineWidth = 2.4; ctx.stroke(SWORDS); ctx.restore()')
       call sb_put(sb, ';'//NL)
       call sb_put(sb, '    }'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  ctx.globalAlpha = 1;'//NL)
-      call sb_put(sb, '  const pmax = Math.max(1, ...R.map(m => m.pop || 0));'//NL)
-      call sb_put(sb, '  ctx.textBaseline = ''middle'';'//NL)
-      call sb_put(sb, '  for (const m of R) {'//NL)
-      call sb_put(sb, '    const [x, y, a] = pos.get(m.id), r = (4 + 9 * Math.sqrt((m.pop || 0) / pmax)) * d, dim ')
-      call sb_put(sb, '= fo && fo !== m.id;'//NL)
-      call sb_put(sb, '    ctx.globalAlpha = dim ? 0.75 : 1;'//NL)
+      call sb_put(sb, '  const pmax = Math.max(1, m0.pop || 0, ...P.map(p => p.m.pop || 0));'//NL)
+      call sb_put(sb, '  const node = (m, x, y, r, main) => {'//NL)
       call sb_put(sb, '    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.1, x, y, r);'//NL)
       call sb_put(sb, '    g.addColorStop(0, jewel(m.hue, 12)); g.addColorStop(1, jewel(m.hue, 6));'//NL)
       call sb_put(sb, '    ctx.fillStyle = ''#05070c''; ctx.beginPath(); ctx.arc(x, y, r + 2 * d, 0, 7); ctx.fill(')
       call sb_put(sb, ');'//NL)
       call sb_put(sb, '    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();'//NL)
-      call sb_put(sb, '    ctx.lineWidth = (fo === m.id ? 2 : 1) * d;'//NL)
-      call sb_put(sb, '    ctx.strokeStyle = famished(m) ? ''#e0a04a'' : fo === m.id ? ''#f0cf8e'' : ''rgba(216,16')
-      call sb_put(sb, '6,87,.75)''; ctx.stroke();'//NL)
-      call sb_put(sb, '    const ca = Math.cos(a), sa = Math.sin(a), tx = x + (r + 7 * d) * ca, ty = y + (r + 7 * ')
-      call sb_put(sb, 'd) * sa;'//NL)
+      call sb_put(sb, '    ctx.lineWidth = (main ? 2 : 1) * d;'//NL)
+      call sb_put(sb, '    ctx.strokeStyle = famished(m) ? ''#e0a04a'' : main ? ''#f0cf8e'' : ''rgba(216,166,87,.7')
+      call sb_put(sb, '5)''; ctx.stroke();'//NL)
+      call sb_put(sb, '    cv._pos.set(m.id, [x, y]);'//NL)
+      call sb_put(sb, '  };'//NL)
+      call sb_put(sb, '  ctx.textBaseline = ''middle'';'//NL)
+      call sb_put(sb, '  for (const p of P) {'//NL)
+      call sb_put(sb, '    const r = (4 + 8 * Math.sqrt((p.m.pop || 0) / pmax)) * d, ca = Math.cos(p.a), sa = Math')
+      call sb_put(sb, '.sin(p.a);'//NL)
+      call sb_put(sb, '    node(p.m, p.x, p.y, r, false);'//NL)
       call sb_put(sb, '    ctx.textAlign = ca > 0.25 ? ''left'' : ca < -0.25 ? ''right'' : ''center'';'//NL)
-      call sb_put(sb, '    ctx.font = `${fo === m.id ? 600 : 400} ${11.5 * d}px ${SERIF}`;'//NL)
-      call sb_put(sb, '    ctx.fillStyle = famished(m) ? ''#e6a95a'' : tint(m.hue);'//NL)
-      call sb_put(sb, '    ctx.fillText(m.name, tx, ty + (Math.abs(ca) <= 0.25 ? (sa > 0 ? 5 : -5) * d : 0));'//NL)
+      call sb_put(sb, '    ctx.font = `${11 * d}px ${SERIF}`;'//NL)
+      call sb_put(sb, '    ctx.fillStyle = famished(p.m) ? ''#e6a95a'' : tint(p.m.hue);'//NL)
+      call sb_put(sb, '    ctx.fillText(p.m.name, p.x + (r + 6 * d) * ca, p.y + (r + 6 * d) * sa + (Math.abs(ca) <')
+      call sb_put(sb, '= 0.25 ? (sa > 0 ? 5 : -5) * d : 0));'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  ctx.globalAlpha = 1;'//NL)
-      call sb_put(sb, '  cv._pos = pos; cv._d = d;'//NL)
+      call sb_put(sb, '  const r0 = (7 + 7 * Math.sqrt((m0.pop || 0) / pmax)) * d;'//NL)
+      call sb_put(sb, '  node(m0, cx, cy, r0, true);'//NL)
+      call sb_put(sb, '  ctx.textAlign = ''center''; ctx.font = `600 ${11.5 * d}px ${SERIF}`; ctx.fillStyle = tint')
+      call sb_put(sb, '(m0.hue);'//NL)
+      call sb_put(sb, '  ctx.fillText(m0.name, cx, cy + r0 + 10 * d);'//NL)
+      call sb_put(sb, '  if (!n) { ctx.font = `italic ${11 * d}px ${SERIF}`; ctx.fillStyle = ''rgba(233,220,192,.5')
+      call sb_put(sb, ')''; ctx.fillText(''alone in the world'', cx, cy - r0 - 12 * d); }'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function bindWeb() {'//NL)
       call sb_put(sb, '  $(''#realms'').addEventListener(''mousemove'', ev => {'//NL)
@@ -26231,8 +28330,8 @@ contains
       call sb_put(sb, 'iew === 9 ? 0 : G.prevView, true);'//NL)
       call sb_put(sb, '  renderTop();'//NL)
       call sb_put(sb, '  try { await getJSON(''/cmd?c=purist&v='' + (on ? 1 : 0)); } catch (e) { /* */ }'//NL)
-      call sb_put(sb, '  toast(on ? ''<b>Purist</b> · Only B3/S23 on a torus: the sky, the soil and the gods are ')
-      call sb_put(sb, 'still.'' :'//NL)
+      call sb_put(sb, '  toast(on ? ''<b>Purist</b> · Only B3/S23 on a bounded board: the sky, the soil and the g')
+      call sb_put(sb, 'ods are still.'' :'//NL)
       call sb_put(sb, '    ''<b>The world returns</b> · sky, soil, peoples and gods.'');'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function renderTop() {'//NL)
@@ -26298,8 +28397,9 @@ contains
       call sb_put(sb, '    case 9: h += ''<span>plain B3/S23, white on black</span>''; break;'//NL)
       call sb_put(sb, '    case 10: h += grad(''#08122a,#15406a,#2e8a8c,#5c7042,#9e805e,#e2e4e8'', ''−4 km'', ''')
       call sb_put(sb, '+4 km''); break;'//NL)
-      call sb_put(sb, '    case 11: h += soc && soc.realms ? chips(soc.realms.slice(0, 7).map(m => [jewel(m.hue, 1')
-      call sb_put(sb, '0), m.name])) : ''''; break;'//NL)
+      call sb_put(sb, '    case 11: h += chips([[RELC.war, ''war''], [RELC.tense, ''tense''], [RELC.truce, ''truce')
+      call sb_put(sb, '''], [RELC.ally, ''allies''], [RELC.pact, ''trade pact'']]) +'//NL)
+      call sb_put(sb, '      ''<span class="tk">the borders, by how the realms stand</span>''; break;'//NL)
       call sb_put(sb, '    case 12: h += soc && soc.faiths ? chips(soc.faiths.filter(f => f.state !== 2).slice(0, ')
       call sb_put(sb, '5).map(f => [jewel(f.hue, 10), f.name])) : ''''; break;'//NL)
       call sb_put(sb, '  }'//NL)
@@ -26376,8 +28476,9 @@ contains
       call sb_put(sb, '};'//NL)
       call sb_put(sb, 'const glyph = k => (GLYPH[String(k || '''').toLowerCase().replace(/[_\- ]/g, '''')] || ''·')
       call sb_put(sb, ''') + VS;'//NL)
-      call sb_put(sb, 'const CH = { list: [], byId: new Map(), since: 0, fresh: new Set(), n: 0, newly: [], filter')
-      call sb_put(sb, ': Q.get(''chron'') === ''all'' ? ''all'' : ''major'' };'//NL)
+      call sb_put(sb, 'const CH = { list: [], byId: new Map(), since: 0, fresh: new Set(), n: 0, newly: [],'//NL)
+      call sb_put(sb, '  filter: [''all'', ''realms''].includes(Q.get(''chron'')) ? Q.get(''chron'') : ''major'' }')
+      call sb_put(sb, ';'//NL)
       call sb_put(sb, 'function mergeChron(list) {'//NL)
       call sb_put(sb, '  CH.newly = [];'//NL)
       call sb_put(sb, '  if (!list || !list.length) return false;'//NL)
@@ -26385,6 +28486,12 @@ contains
       call sb_put(sb, '  const init = CH.since === 0;'//NL)
       call sb_put(sb, '  for (const e of list) {'//NL)
       call sb_put(sb, '    if (CH.byId.has(e.id)) continue;'//NL)
+      call sb_put(sb, '    if (e.prev && CH.byId.has(e.prev)) {             // a story come round again takes its ')
+      call sb_put(sb, 'old entry''s place'//NL)
+      call sb_put(sb, '      const o = CH.byId.get(e.prev), k = CH.list.indexOf(o);'//NL)
+      call sb_put(sb, '      CH.byId.delete(e.prev);'//NL)
+      call sb_put(sb, '      if (k >= 0) CH.list.splice(k, 1);'//NL)
+      call sb_put(sb, '    }'//NL)
       call sb_put(sb, '    CH.byId.set(e.id, e); CH.list.push(e); ch = true;'//NL)
       call sb_put(sb, '    if (!init) { CH.fresh.add(e.id); CH.newly.push(e); }'//NL)
       call sb_put(sb, '    CH.since = Math.max(CH.since, e.id);'//NL)
@@ -26396,12 +28503,13 @@ contains
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function renderChron() {'//NL)
       call sb_put(sb, '  // ages in reverse order, each headed by its name; inside an age the newest entry first'//NL)
-      call sb_put(sb, '  const L = CH.list.slice().sort((a, b) => a.id - b.id), ages = [{ e: null, list: [] }], ma')
-      call sb_put(sb, 'jor = CH.filter === ''major'';'//NL)
+      call sb_put(sb, '  const L = CH.list.slice().sort((a, b) => a.id - b.id), ages = [{ e: null, list: [] }], f ')
+      call sb_put(sb, '= CH.filter;'//NL)
       call sb_put(sb, '  let shown = 0;'//NL)
       call sb_put(sb, '  for (const e of L) {'//NL)
       call sb_put(sb, '    if (e.kind === ''age'') ages.push({ e, list: [] });'//NL)
-      call sb_put(sb, '    else if (!major || isMajor(e)) { ages[ages.length - 1].list.push(e); shown++; }'//NL)
+      call sb_put(sb, '    else if (f === ''all'' || (f === ''realms'' ? isRealmy(e) : isMajor(e))) { ages[ages.le')
+      call sb_put(sb, 'ngth - 1].list.push(e); shown++; }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  const out = [];'//NL)
       call sb_put(sb, '  for (let k = ages.length - 1; k >= 0; k--) {'//NL)
@@ -26421,13 +28529,14 @@ contains
       call sb_put(sb, ''' : ''''}` +'//NL)
       call sb_put(sb, '        `${e.kind === ''extinct'' ? '' epitaph'' : ''''}"${go ? ` data-x="${e.x}" data-y="$')
       call sb_put(sb, '{e.y}"` : ''''}>` +'//NL)
-      call sb_put(sb, '        `<span class="g">${glyph(e.kind)}</span><span class="t">${t}</span></div>`);'//NL)
+      call sb_put(sb, '        `<span class="g">${glyph(e.kind)}</span><span class="t">${t}${e.rep > 0 ? `<em clas')
+      call sb_put(sb, 's="rep">×${e.rep + 1}</em>` : ''''}</span></div>`);'//NL)
       call sb_put(sb, '    }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  $(''#clist'').innerHTML = out.join('''') || ''<div class="empty">The Book is still blank.')
       call sb_put(sb, '</div>'';'//NL)
-      call sb_put(sb, '  $(''#ccount'').textContent = major ? `${shown} of ${CH.list.length}` : `${CH.list.length}')
-      call sb_put(sb, ' entries`;'//NL)
+      call sb_put(sb, '  $(''#ccount'').textContent = f !== ''all'' ? `${shown} of ${CH.list.length}` : `${CH.list')
+      call sb_put(sb, '.length} entries`;'//NL)
       call sb_put(sb, '  CH.fresh.clear();'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function bindChron() {'//NL)
@@ -26546,118 +28655,142 @@ contains
       call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
       call sb_put(sb, '// ------------------------------------------------------------------ realms and diplomacy'//NL)
+      call sb_put(sb, '// Forty realms as well as four: first the wars, each with its tug of war; then the chosen ')
+      call sb_put(sb, 'realm (the'//NL)
+      call sb_put(sb, '// greatest, until another is clicked) with its web and its bonds, the gravest first; then ')
+      call sb_put(sb, 'every realm'//NL)
+      call sb_put(sb, '// on a line of its own; then the fallen.'//NL)
+      call sb_put(sb, 'function relsOf(s, id) {'//NL)
+      call sb_put(sb, '  const M = new Map(), get = q => M.get(q) || (M.set(q, { id: q, st: ''peace'', rel: null, ')
+      call sb_put(sb, 'len: 0, sanc: '''' }), M.get(q));'//NL)
+      call sb_put(sb, '  const up = (q, st) => { const r = get(q); if (RW[st] > RW[r.st]) r.st = st; };'//NL)
+      call sb_put(sb, '  for (const b of s._bord || []) if (b.a === id || b.b === id) { const r = get(b.a === id ?')
+      call sb_put(sb, ' b.b : b.a); r.st = b.st; r.rel = b.rel; r.len = b.len | 0; }'//NL)
+      call sb_put(sb, '  for (const w of s.wars || []) if (w.a === id || w.b === id) get(w.a === id ? w.b : w.a).s')
+      call sb_put(sb, 't = ''war'';'//NL)
+      call sb_put(sb, '  for (const t of s.truces || []) if (t.a === id || t.b === id) up(t.a === id ? t.b : t.a, ')
+      call sb_put(sb, '''truce'');'//NL)
+      call sb_put(sb, '  for (const p of s.alliances || []) if (p[0] === id || p[1] === id) up(p[0] === id ? p[1] ')
+      call sb_put(sb, ': p[0], ''ally'');'//NL)
+      call sb_put(sb, '  for (const p of s.pacts || []) if (p[0] === id || p[1] === id) up(p[0] === id ? p[1] : p[')
+      call sb_put(sb, '0], ''pact'');'//NL)
+      call sb_put(sb, '  for (const r of s.relations || []) if (r.a === id || r.b === id) { const o = get(r.a === ')
+      call sb_put(sb, 'id ? r.b : r.a); if (o.rel == null) o.rel = Math.round(r.rel); }'//NL)
+      call sb_put(sb, '  for (const t of s.sanctions || []) { if (t.by === id) get(t.on).sanc = ''it sanctions the')
+      call sb_put(sb, 'm''; else if (t.on === id) get(t.by).sanc = ''sanctioned by them''; }'//NL)
+      call sb_put(sb, '  return [...M.values()].filter(r => { const m = s.rmap.get(r.id); return m && !m.fallen; }')
+      call sb_put(sb, ')'//NL)
+      call sb_put(sb, '    .sort((p, q) => RW[q.st] - RW[p.st] || q.len - p.len || (p.rel || 0) - (q.rel || 0));'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function tugHTML(w) {'//NL)
+      call sb_put(sb, '  const A = rOf(w.a), B = rOf(w.b), ca = A ? jewel(A.hue, 12) : ''#d8a657'', cb = B ? jewel')
+      call sb_put(sb, '(B.hue, 12) : ''#d8a657'';'//NL)
+      call sb_put(sb, '  if (w.streak == null) {'//NL)
+      call sb_put(sb, '    const wa = w.winsA | 0, wb = w.winsB | 0, f = wa + wb ? (100 * wa / (wa + wb)).toFixed(')
+      call sb_put(sb, '0) : 50;'//NL)
+      call sb_put(sb, '    return `<span class="tugb sp"><i style="width:${f}%;background:${ca}"></i><i style="fle')
+      call sb_put(sb, 'x:1;background:${cb}"></i></span>`;'//NL)
+      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const n = clamp((w.need | 0) || 3, 1, 6), S = clamp(w.streak | 0, -n, n);'//NL)
+      call sb_put(sb, '  let l = '''', r = '''';'//NL)
+      call sb_put(sb, '  for (let k = n - 1; k >= 0; k--) l += `<i${S > k ? ` style="background:${ca}"` : ''''}></')
+      call sb_put(sb, 'i>`;'//NL)
+      call sb_put(sb, '  for (let k = 0; k < n; k++) r += `<i${-S > k ? ` style="background:${cb}"` : ''''}></i>`;'//NL)
+      call sb_put(sb, '  return `<span class="tugb">${l}<b></b>${r}</span>`;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function warRowHTML(w) {'//NL)
+      call sb_put(sb, '  const S = w.streak | 0, n = (w.need | 0) || 3, tk = (w.takenA | 0) + (w.takenB | 0);'//NL)
+      call sb_put(sb, '  const lead = w.streak == null ? `won ${w.winsA | 0} to ${w.winsB | 0}` : S ? `${esc(rName')
+      call sb_put(sb, '(S > 0 ? w.a : w.b))} presses: ${Math.abs(S)} of ${n}` +'//NL)
+      call sb_put(sb, '    `${n >= 5 ? '' to take a capital'' : '' to take a region''}` : ''the front stands even')
+      call sb_put(sb, ''';'//NL)
+      call sb_put(sb, '  return `<div class="wrow${w.holy ? '' holy'' : ''''}" data-x="${w.x | 0}" data-y="${w.y |')
+      call sb_put(sb, ' 0}" data-a="${w.a}">` +'//NL)
+      call sb_put(sb, '    `<div class="wr1">${armsImg(rOf(w.a) || { id: w.a }, ''xs'')}<span class="t">${esc(rNam')
+      call sb_put(sb, 'e(w.a))}</span><span class="vs">${(w.holy ? ''✙'' : ''⚔'') + VS}</span>` +'//NL)
+      call sb_put(sb, '    `<span class="t">${esc(rName(w.b))}</span>${armsImg(rOf(w.b) || { id: w.b }, ''xs'')}<s')
+      call sb_put(sb, 'pan class="w">${w.since != null ? ''since '' + Math.floor(w.since) : ''''}</span></div>` +'//NL)
+      call sb_put(sb, '    `<div class="wr2">${tugHTML(w)}<span>${lead}</span></div>` +'//NL)
+      call sb_put(sb, '    `<div class="wr3">${w.battles | 0} battle${w.battles === 1 ? '''' : ''s''} · won ${w.w')
+      call sb_put(sb, 'insA | 0}–${w.winsB | 0} · ${big((w.slainA || 0) + (w.slainB || 0))} slain` +'//NL)
+      call sb_put(sb, '    `${tk ? ` · regions taken ${w.takenA | 0}–${w.takenB | 0}` : ''''}</div>` +'//NL)
+      call sb_put(sb, '    (w.fa || w.fb ? `<div class="wr3 fr">at the front: ${esc(w.fa || ''—'')} ↔ ${esc(w.')
+      call sb_put(sb, 'fb || ''—'')}</div>` : '''') + ''</div>'';'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'const STW = { war: ''at war'', truce: ''a truce'', tense: ''tense'', ally: ''allied'', pact')
+      call sb_put(sb, ': ''trade pact'', peace: ''at peace'' };'//NL)
+      call sb_put(sb, 'function relRowHTML(r) {'//NL)
+      call sb_put(sb, '  const m = rOf(r.id), what = [r.st === ''peace'' && r.len ? ''neighbours'' : STW[r.st]];'//NL)
+      call sb_put(sb, '  if (r.sanc) what.push(r.sanc);'//NL)
+      call sb_put(sb, '  if (r.len) what.push(''border '' + r.len);'//NL)
+      call sb_put(sb, '  return `<div class="rrow ${r.st}" data-id="${r.id}">${MEDSVG[r.st] || MEDSVG.peace}${arms')
+      call sb_put(sb, 'Img(m, ''xs'')}` +'//NL)
+      call sb_put(sb, '    `<span class="t">${esc(m.name)}<em>${esc(what.join('' · ''))}</em></span>` +'//NL)
+      call sb_put(sb, '    `<span class="w">${r.rel != null ? relBar(r.rel) + `<b>${r.rel > 0 ? ''+'' : ''''}${r.r')
+      call sb_put(sb, 'el | 0}</b>` : ''''}</span></div>`;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function realmRowHTML(m, selId) {'//NL)
+      call sb_put(sb, '  const nw = m._war ? m._war.size : 0, na = m._ally ? m._ally.size : 0, fam = famished(m);'//NL)
+      call sb_put(sb, '  return `<div class="rrl${m.id === selId ? '' sel'' : ''''}${fam ? '' fam'' : ''''}" data-')
+      call sb_put(sb, 'id="${m.id}">${armsImg(m, ''xs'')}` +'//NL)
+      call sb_put(sb, '    `<span class="t">${esc(m.name)}</span><span class="w">${big(m.pop)} · ${m.nreg | 0} re')
+      call sb_put(sb, 'g.</span><span class="ic">` +'//NL)
+      call sb_put(sb, '    `${nw ? `<i class="iw">⚔${VS}${nw > 1 ? nw : ''''}</i>` : ''''}${na ? `<i class="ia">')
+      call sb_put(sb, '⚭${VS}${na > 1 ? na : ''''}</i>` : ''''}` +'//NL)
+      call sb_put(sb, '    `${fam ? `<i class="if">⌓${VS}</i>` : ''''}</span></div>`;'//NL)
+      call sb_put(sb, '}'//NL)
+      call sb_put(sb, 'function selCardHTML(m, s) {'//NL)
+      call sb_put(sb, '  const st = m.stability || 0, fh = s.fmap.get(m.faith);'//NL)
+      call sb_put(sb, '  return `<div class="rcard sel${famished(m) ? '' fam'' : ''''}" data-id="${m.id}">` +'//NL)
+      call sb_put(sb, '    `<span class="shw" data-tip="${esc(cap1(m.title || m.name))}|${esc(blazon(m))}.">${arms')
+      call sb_put(sb, 'Img(m, ''sh'')}</span>` +'//NL)
+      call sb_put(sb, '    `<div class="rt">${esc(m.title || m.name)}</div>` +'//NL)
+      call sb_put(sb, '    `<div class="ru">${icon(''g-'' + govName(m.gov))}<span>${esc(m.ruler || ''no ruler'')}<')
+      call sb_put(sb, '/span>` +'//NL)
+      call sb_put(sb, '    `${m.peopleName ? `<span class="dim" style="font-style:normal">· ${esc(m.peopleName)}<')
+      call sb_put(sb, '/span>` : ''''}</div>` +'//NL)
+      call sb_put(sb, '    `<div class="rstats"><span>people<b>${big(m.pop)}</b></span><span>regions<b>${m.nreg}</')
+      call sb_put(sb, 'b></span>` +'//NL)
+      call sb_put(sb, '    `<span>treasury<b>${big(m.wealth)}</b></span><span>host<b>${big(m.army)}</b></span></di')
+      call sb_put(sb, 'v>` +'//NL)
+      call sb_put(sb, '    `<div class="rfaith">${fh ? `<i class="sw1" style="background:${jewel(fh.hue, 11)};colo')
+      call sb_put(sb, 'r:${jewel(fh.hue, 11)}"></i><span style="overflow:hidden;text-overflow:ellipsis">${esc(fh.n')
+      call sb_put(sb, 'ame)}</span>` :'//NL)
+      call sb_put(sb, '      ''<span class="dim">no state faith</span>''}` +'//NL)
+      call sb_put(sb, '    `<span class="stb">stability<span class="stbar"><i style="width:${(100 * st).toFixed(0)')
+      call sb_put(sb, '}%;background:${stabCol(st)}"></i></span></span></div>` +'//NL)
+      call sb_put(sb, '    (famished(m) ? ''<div class="rchips"><span class="chip fam">famine</span></div>'' : ''')
+      call sb_put(sb, ''') + ''</div>'';'//NL)
+      call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function renderRealms(s) {'//NL)
-      call sb_put(sb, '  const R = s.realms.slice().sort((a, b) => b.pop - a.pop);'//NL)
+      call sb_put(sb, '  const R = s.realms.slice().sort((a, b) => b.pop - a.pop), W = (s.wars || []).slice().sort')
+      call sb_put(sb, '((p, q) => (q.battles | 0) - (p.battles | 0));'//NL)
       call sb_put(sb, '  $(''#rcount'').textContent = `${R.length} · ${(s.fallen || []).length} fallen`;'//NL)
-      call sb_put(sb, '  const rel = new Map((s.relations || []).map(r => [pair(r.a, r.b), r.rel]));'//NL)
-      call sb_put(sb, '  const ally = new Set((s.alliances || []).map(a => pair(a[0], a[1])));'//NL)
-      call sb_put(sb, '  const pact = new Set((s.pacts || []).map(a => pair(a[0], a[1])));'//NL)
+      call sb_put(sb, '  let sel = rOf(G.selRealm), L = [];'//NL)
+      call sb_put(sb, '  if (!sel || sel.fallen) sel = R[0];'//NL)
       call sb_put(sb, '  let h = '''';'//NL)
-      call sb_put(sb, '  if (R.length > 1) {'//NL)
-      call sb_put(sb, '    h += sec(''The Web of Realms'', ''who stands with whom'');'//NL)
-      call sb_put(sb, '    h += ''<div class="webw"><canvas class="web"></canvas><div class="wkey"><span><i class=')
-      call sb_put(sb, '"w"></i>war</span><span><i class="a"></i>alliance</span>'' +'//NL)
-      call sb_put(sb, '      ''<span><i class="p"></i>trade pact</span><span><i class="t"></i>trade, by its worth<')
-      call sb_put(sb, '/span><span><i class="f"></i>famine</span></div></div>'';'//NL)
+      call sb_put(sb, '  if (W.length) h += sec(''Wars'', `${W.length} raging · click: the front`) + W.map(warRow')
+      call sb_put(sb, 'HTML).join('''');'//NL)
+      call sb_put(sb, '  if (sel) {'//NL)
+      call sb_put(sb, '    L = relsOf(s, sel.id);'//NL)
+      call sb_put(sb, '    h += sec(esc(sel.name), ''its bonds, the gravest first'') + selCardHTML(sel, s);'//NL)
+      call sb_put(sb, '    if (R.length > 1) h += ''<div class="webw"><canvas class="web"></canvas><div class="wke')
+      call sb_put(sb, 'y"><span><i class="w"></i>war</span>'' +'//NL)
+      call sb_put(sb, '      ''<span><i class="tr"></i>truce</span><span><i class="tn"></i>tense</span><span><i cl')
+      call sb_put(sb, 'ass="a"></i>allies</span>'' +'//NL)
+      call sb_put(sb, '      ''<span><i class="p"></i>trade pact</span><span><i class="f"></i>famine</span></div><')
+      call sb_put(sb, '/div>'';'//NL)
+      call sb_put(sb, '    h += L.length ? L.slice(0, 40).map(relRowHTML).join('''') : ''<div class="empty">It has')
+      call sb_put(sb, ' no dealings with any other realm.</div>'';'//NL)
       call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  h += sec(''The Realms'', ''by population'');'//NL)
-      call sb_put(sb, '  for (const m of R) {'//NL)
-      call sb_put(sb, '    const wars = (s.wars || []).filter(w => w.a === m.id || w.b === m.id);'//NL)
-      call sb_put(sb, '    const chips = famished(m) ? [''<span class="chip fam">famine</span>''] : [];'//NL)
-      call sb_put(sb, '    for (const w of wars) chips.push(`<span class="chip war">${w.holy ? ''holy war'' : ''at')
-      call sb_put(sb, ' war''} with ${esc(rName(w.a === m.id ? w.b : w.a))}</span>`);'//NL)
-      call sb_put(sb, '    for (const a of s.alliances || []) if (a.includes(m.id)) chips.push(`<span class="chip ')
-      call sb_put(sb, 'ally">allied to ${esc(rName(a[0] === m.id ? a[1] : a[0]))}</span>`);'//NL)
-      call sb_put(sb, '    for (const a of s.sanctions || []) if (a.on === m.id) chips.push(`<span class="chip san')
-      call sb_put(sb, 'c">sanctioned by ${esc(rName(a.by))}</span>`);'//NL)
-      call sb_put(sb, '    const st = m.stability || 0, fh = s.fmap.get(m.faith);'//NL)
-      call sb_put(sb, '    h += `<div class="rcard${G.selRealm === m.id ? '' sel'' : ''''}${famished(m) ? '' fam''')
-      call sb_put(sb, ' : ''''}" data-id="${m.id}">` +'//NL)
-      call sb_put(sb, '      `<span class="shw" data-tip="${esc(cap1(m.title || m.name))}|${esc(blazon(m))}.">${ar')
-      call sb_put(sb, 'msImg(m, ''sh'')}</span>` +'//NL)
-      call sb_put(sb, '      `<div class="rt">${esc(m.title || m.name)}</div>` +'//NL)
-      call sb_put(sb, '      `<div class="ru">${icon(''g-'' + govName(m.gov))}<span>${esc(m.ruler || ''no ruler'')')
-      call sb_put(sb, '}</span>` +'//NL)
-      call sb_put(sb, '      `${m.peopleName ? `<span class="dim" style="font-style:normal">· ${esc(m.peopleName)')
-      call sb_put(sb, '}</span>` : ''''}</div>` +'//NL)
-      call sb_put(sb, '      `<div class="rstats"><span>people<b>${big(m.pop)}</b></span><span>regions<b>${m.nreg}')
-      call sb_put(sb, '</b></span>` +'//NL)
-      call sb_put(sb, '      `<span>treasury<b>${big(m.wealth)}</b></span><span>host<b>${big(m.army)}</b></span></')
-      call sb_put(sb, 'div>` +'//NL)
-      call sb_put(sb, '      `<div class="rfaith">${fh ? `<i class="sw1" style="background:${jewel(fh.hue, 11)};co')
-      call sb_put(sb, 'lor:${jewel(fh.hue, 11)}"></i><span style="overflow:hidden;text-overflow:ellipsis">${esc(fh')
-      call sb_put(sb, '.name)}</span>` :'//NL)
-      call sb_put(sb, '        ''<span class="dim">no state faith</span>''}` +'//NL)
-      call sb_put(sb, '      `<span class="stb">stability<span class="stbar"><i style="width:${(100 * st).toFixed(')
-      call sb_put(sb, '0)}%;background:${stabCol(st)}"></i></span></span></div>` +'//NL)
-      call sb_put(sb, '      (chips.length ? `<div class="rchips">${chips.slice(0, 4).join('''')}</div>` : '''') +')
-      call sb_put(sb, ' ''</div>'';'//NL)
-      call sb_put(sb, '  }'//NL)
-      call sb_put(sb, '  h += sec(''Diplomacy'');'//NL)
-      call sb_put(sb, '  const rows = [];'//NL)
-      call sb_put(sb, '  for (const w of s.wars || [])'//NL)
-      call sb_put(sb, '    rows.push(`<div class="dip war${w.holy ? '' holy'' : ''''}" data-tip="${esc(rName(w.a))')
-      call sb_put(sb, '} against ${esc(rName(w.b))}|` +'//NL)
-      call sb_put(sb, '      `${esc(w.cause ? cap1(w.cause) + ''. '' : '''')}${w.battles != null ? `${w.battles} b')
-      call sb_put(sb, 'attles; won ${w.winsA | 0} to ${w.winsB | 0}; slain ` +'//NL)
-      call sb_put(sb, '        `${big(w.slainA || 0)} and ${big(w.slainB || 0)}; regions taken ${w.takenA | 0} and')
-      call sb_put(sb, ' ${w.takenB | 0}.` : ''''}">` +'//NL)
-      call sb_put(sb, '      `<span class="g">${(w.holy ? ''✙'' : ''⚔'') + VS}</span>` +'//NL)
-      call sb_put(sb, '      `<span class="t">${rn(w.a)} <span class="dim">${w.holy ? ''wages holy war on'' : ''ma')
-      call sb_put(sb, 'kes war on''}</span> ${rn(w.b)}</span>` +'//NL)
-      call sb_put(sb, '      `<span class="w">${w.since != null ? ''since '' + Math.floor(w.since) : ''war''}${w.b')
-      call sb_put(sb, 'attles != null ? ` · ${w.battles} battles` : ''''}</span></div>`);'//NL)
-      call sb_put(sb, '  for (const a of s.alliances || [])'//NL)
-      call sb_put(sb, '    rows.push(`<div class="dip"><span class="g">⚭${VS}</span><span class="t">${rn(a[0])} ')
-      call sb_put(sb, '<span class="dim">allied with</span> ${rn(a[1])}</span><span class="w">alliance</span></div')
-      call sb_put(sb, '>`);'//NL)
-      call sb_put(sb, '  for (const a of s.pacts || [])'//NL)
-      call sb_put(sb, '    rows.push(`<div class="dip pact"><span class="g">⚖${VS}</span><span class="t">${rn(a[')
-      call sb_put(sb, '0])} <span class="dim">trades freely with</span> ${rn(a[1])}</span><span class="w">pact</sp')
-      call sb_put(sb, 'an></div>`);'//NL)
-      call sb_put(sb, '  for (const a of s.sanctions || [])'//NL)
-      call sb_put(sb, '    rows.push(`<div class="dip sanc"><span class="g">⊘${VS}</span><span class="t">${rn(a.')
-      call sb_put(sb, 'by)} <span class="dim">sanctions</span> ${rn(a.on)}</span><span class="w">embargo</span></d')
-      call sb_put(sb, 'iv>`);'//NL)
-      call sb_put(sb, '  h += rows.join('''') || ''<div class="empty">The realms are at peace, and bound by nothin')
-      call sb_put(sb, 'g.</div>'';'//NL)
-      call sb_put(sb, '  // the relations matrix'//NL)
-      call sb_put(sb, '  const N = R.length;'//NL)
-      call sb_put(sb, '  if (N > 1) {'//NL)
-      call sb_put(sb, '    h += sec(''Relations'', ''−100 … +100'');'//NL)
-      call sb_put(sb, '    let g = `<div class="relm" style="display:grid;grid-template-columns:12px repeat(${N},1')
-      call sb_put(sb, '7px);gap:2px">` + ''<span></span>'';'//NL)
-      call sb_put(sb, '    for (const m of R) g += `<span class="sw1" style="width:17px;height:6px;align-self:end;')
-      call sb_put(sb, 'background:${jewel(m.hue, 10)}" data-tip="${esc(m.name)}"></span>`;'//NL)
-      call sb_put(sb, '    for (const a of R) {'//NL)
-      call sb_put(sb, '      g += `<span class="sw1" style="width:6px;height:17px;justify-self:end;background:${je')
-      call sb_put(sb, 'wel(a.hue, 10)}" data-tip="${esc(a.name)}"></span>`;'//NL)
-      call sb_put(sb, '      for (const b of R) {'//NL)
-      call sb_put(sb, '        if (a.id === b.id) { g += ''<span style="width:17px;height:17px;border-radius:3px;b')
-      call sb_put(sb, 'ackground:rgba(233,220,192,.06)"></span>''; continue; }'//NL)
-      call sb_put(sb, '        const v = rel.get(pair(a.id, b.id)) || 0, t = clamp(Math.abs(v) / 100, 0, 1);'//NL)
-      call sb_put(sb, '        const c = v < 0 ? `rgba(196,74,48,${(0.15 + 0.8 * t).toFixed(2)})` : `rgba(216,166,')
-      call sb_put(sb, '87,${(0.12 + 0.8 * t).toFixed(2)})`;'//NL)
-      call sb_put(sb, '        const atw = s.warSet.has(a.id) && (s.wars || []).some(w => pair(w.a, w.b) === pair(')
-      call sb_put(sb, 'a.id, b.id));'//NL)
-      call sb_put(sb, '        const mark = atw ? ''⚔'' : ally.has(pair(a.id, b.id)) ? ''⚭'' : pact.has(pair(a')
-      call sb_put(sb, '.id, b.id)) ? ''⚖'' : '''';'//NL)
-      call sb_put(sb, '        g += `<span style="width:17px;height:17px;border-radius:3px;background:${c};display')
-      call sb_put(sb, ':grid;place-items:center;font:10px var(--sym);` +'//NL)
-      call sb_put(sb, '          `color:#140e08${atw ? '';box-shadow:inset 0 0 0 1px #ff9a7a'' : ''''}" data-tip="')
-      call sb_put(sb, '${esc(a.name)} and ${esc(b.name)}|` +'//NL)
-      call sb_put(sb, '          `Relations ${v > 0 ? ''+'' : ''''}${v}${atw ? '', at war'' : ''''}.">${mark ? mar')
-      call sb_put(sb, 'k + VS : ''''}</span>`;'//NL)
-      call sb_put(sb, '      }'//NL)
-      call sb_put(sb, '    }'//NL)
-      call sb_put(sb, '    g += ''</div>'';'//NL)
-      call sb_put(sb, '    h += `<div class="relwrap">${g}<div class="relkey">Each square is how two realms regard')
-      call sb_put(sb, ' each other: gold for friendship, ` +'//NL)
-      call sb_put(sb, '      `red for hatred. Wars, holy wars, shared faith, trade and borders move it each counci')
-      call sb_put(sb, 'l.` +'//NL)
-      call sb_put(sb, '      `<div class="bar"></div><div class="tk"><span>−100</span><span>0</span><span>+100</')
-      call sb_put(sb, 'span></div></div></div>`;'//NL)
-      call sb_put(sb, '  }'//NL)
+      call sb_put(sb, '  const cnt = (k, one, many) => { const v = (s[k] || []).length; return `${v} ${v === 1 ? o')
+      call sb_put(sb, 'ne : many}`; };'//NL)
+      call sb_put(sb, '  h += sec(''The Realms'', ''by population · click one'') +'//NL)
+      call sb_put(sb, '    `<div class="tsum">${cnt(''alliances'', ''alliance'', ''alliances'')} · ${cnt(''pacts')
+      call sb_put(sb, ''', ''trade pact'', ''trade pacts'')} · ` +'//NL)
+      call sb_put(sb, '    `${cnt(''truces'', ''truce'', ''truces'')} · ${cnt(''sanctions'', ''sanction'', ''sanc')
+      call sb_put(sb, 'tions'')}</div>` +'//NL)
+      call sb_put(sb, '    R.map(m => realmRowHTML(m, sel ? sel.id : 0)).join('''');'//NL)
       call sb_put(sb, '  if ((s.fallen || []).length) {'//NL)
       call sb_put(sb, '    h += sec(''The Fallen'');'//NL)
       call sb_put(sb, '    h += s.fallen.slice().sort((a, b) => b.fell - a.fell).map(f => `<div class="fallen"><sp')
@@ -26666,7 +28799,8 @@ contains
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  $(''#realms'').innerHTML = h;'//NL)
       call sb_put(sb, '  const cv = $(''#realms canvas.web'');'//NL)
-      call sb_put(sb, '  if (cv) try { drawWeb(cv, s); } catch (e) { report(''web: '' + e.message); }'//NL)
+      call sb_put(sb, '  if (cv) { cv._rel = L; cv._sel = sel ? sel.id : 0; try { drawWeb(cv, s); } catch (e) { re')
+      call sb_put(sb, 'port(''web: '' + e.message); } }'//NL)
       call sb_put(sb, '}'//NL)
       call sb_put(sb, NL)
       call sb_put(sb, '// ------------------------------------------------------------------ faiths and prophecies'//NL)
@@ -26871,8 +29005,16 @@ contains
       call sb_put(sb, '}'//NL)
       call sb_put(sb, 'function bindSociety() {'//NL)
       call sb_put(sb, '  $(''#realms'').addEventListener(''click'', ev => {'//NL)
+      call sb_put(sb, '    const wr = ev.target.closest(''.wrow'');'//NL)
+      call sb_put(sb, '    if (wr) {                                      // a war: to its front'//NL)
+      call sb_put(sb, '      const x = +wr.dataset.x, y = +wr.dataset.y;'//NL)
+      call sb_put(sb, '      if (x || y) pointTo(x, y);'//NL)
+      call sb_put(sb, '      G.selRealm = +wr.dataset.a;'//NL)
+      call sb_put(sb, '      renderSociety();'//NL)
+      call sb_put(sb, '      return;'//NL)
+      call sb_put(sb, '    }'//NL)
       call sb_put(sb, '    const cv = ev.target.closest(''canvas.web'');'//NL)
-      call sb_put(sb, '    const id = cv ? cv._hit : +((ev.target.closest(''.rcard'') || {}).dataset || {}).id;'//NL)
+      call sb_put(sb, '    const id = cv ? cv._hit : +((ev.target.closest(''[data-id]'') || {}).dataset || {}).id;'//NL)
       call sb_put(sb, '    if (!id) return;'//NL)
       call sb_put(sb, '    const m = realmById(id), c = capOf(m);'//NL)
       call sb_put(sb, '    G.selRealm = id;'//NL)
@@ -27637,7 +29779,8 @@ contains
       call sb_put(sb, 'const RULES = ['//NL)
       call sb_put(sb, '  [''Life'', [''Each cell with two or three living neighbours survives; with three, a new o')
       call sb_put(sb, 'ne is born (B3/S23, the beginning).'','//NL)
-      call sb_put(sb, '    ''The world is a torus: what leaves by one edge returns by the other.'']],'//NL)
+      call sb_put(sb, '    ''The world is flat and has edges: nothing crosses them, and at every one the sea pours')
+      call sb_put(sb, ' off into the abyss.'']],'//NL)
       call sb_put(sb, '  [''The Peoples'', [''Every live cell carries its own rule, and every rule is a people.'','//NL)
       call sb_put(sb, '    ''Each people is born where enough of its neighbours consent, by its own rule, and the ')
       call sb_put(sb, 'child takes after them.'','//NL)
@@ -27918,9 +30061,10 @@ contains
       call sb_put(sb, '  if (B.state && B.state.world) { G.nx = B.state.world.nx; G.ny = B.state.world.ny; }'//NL)
       call sb_put(sb, '  G.cx = B.cx || Math.floor(G.nx / 2); G.cy = B.cy || Math.floor(G.ny / 2);'//NL)
       call sb_put(sb, '  G.home = [G.cx, G.cy];'//NL)
-      call sb_put(sb, '  if (Q.get(''cx'')) G.cx = wrap1(+Q.get(''cx''), G.nx);'//NL)
-      call sb_put(sb, '  if (Q.get(''cy'')) G.cy = wrap1(+Q.get(''cy''), G.ny);'//NL)
       call sb_put(sb, '  if (Q.get(''z'')) G.z = clamp(+Q.get(''z''), 1, 4) >= 4 ? 4 : +Q.get(''z'') >= 2 ? 2 : 1;'//NL)
+      call sb_put(sb, '  // ?cx=&cy= (a still near an edge, say) is held inside the pan limit like any other view'//NL)
+      call sb_put(sb, '  const qx = +(Q.get(''cx'') || NaN), qy = +(Q.get(''cy'') || NaN);'//NL)
+      call sb_put(sb, '  [G.cx, G.cy] = viewClamp(isFinite(qx) ? qx : G.cx, isFinite(qy) ? qy : G.cy, G.z);'//NL)
       call sb_put(sb, '  const ppl = syncJSON(''/peoples'');'//NL)
       call sb_put(sb, '  if (ppl) for (const p of ppl.peoples || []) G.names.set(p.rule, p);'//NL)
       call sb_put(sb, '  if (B.state) takeState(B.state);'//NL)
@@ -27968,7 +30112,8 @@ contains
       call sb_put(sb, '    try {'//NL)
       call sb_put(sb, '      const px = b64bytes(B.frame);'//NL)
       call sb_put(sb, '      if (px.length >= 4 * B.w * B.h) takeFrame({ w: B.w, h: B.h, tick: B.state ? B.state.t')
-      call sb_put(sb, 'ick : 0, px }, { z: 1, cx: B.cx || G.cx, cy: B.cy || G.cy });'//NL)
+      call sb_put(sb, 'ick : 0, px }, { z: 1, cx: B.cx || Math.floor(G.nx / 2), cy: B.cy || Math.floor(G.ny / 2) }')
+      call sb_put(sb, ');'//NL)
       call sb_put(sb, '    } catch (e) { report(''boot frame: '' + e.message); }'//NL)
       call sb_put(sb, '  }'//NL)
       call sb_put(sb, '  if (Q.get(''view'')) setView(+Q.get(''view''), true);'//NL)
@@ -28024,11 +30169,14 @@ contains
       call sb_put(sb, '  });'//NL)
       call sb_put(sb, '  $(''#veil'').addEventListener(''click'', closeDlg);'//NL)
       call sb_put(sb, '  document.addEventListener(''keydown'', onKey);'//NL)
+      call sb_put(sb, '  document.addEventListener(''keydown'', panKey);'//NL)
       call sb_put(sb, '  window.addEventListener(''resize'', () => { layout(); drawCharts(); });'//NL)
       call sb_put(sb, '  // and then the loops'//NL)
       call sb_put(sb, '  requestAnimationFrame(animLoop);'//NL)
       call sb_put(sb, '  frameLoop();'//NL)
       call sb_put(sb, '  orbitLoop();'//NL)
+      call sb_put(sb, '  setTimeout(() => artSafe(edgeArt, $(''#map'').width, $(''#map'').height, $(''#map'').widt')
+      call sb_put(sb, 'h / G.pw), 1500);   // the sky, made ahead'//NL)
       call sb_put(sb, '  setInterval(pollState, 250);'//NL)
       call sb_put(sb, '  setInterval(() => pollSociety(), 1000);'//NL)
       call sb_put(sb, '  setInterval(pollPeoples, 20000);'//NL)
@@ -28076,7 +30224,7 @@ module rl_web
                            realm_name, realm_title, ruler_name, faith_name, prophet_name, &
                            prophecy_text
    use rl_soc,       only: soc_alloc, soc_clear, pol, npol, war, ally, pact, sanction, tariff, &
-                           rowner, nreg_s, MAXPOL, &
+                           rowner, nreg_s, MAXPOL, truce, &
                            rel, tradevol, borders, faiths, nfaith, prophs, nproph, wprice, &
                            wsupply, wdemand, wtrade, phist, phist_tick, nphist, MHIST, flows, &
                            nflow, NGOODS, GOOD_NAME, GOV_NAME, NVIEWS_ALL, CMD_PROPHET, &
@@ -28122,11 +30270,12 @@ module rl_web
    ! ================================================================ replies and the frame cache
    integer, parameter :: K_SB = 0, K_PAGE = 1, K_FRAME = 2, K_ORBIT = 3   ! where a body lies
    integer, parameter :: NSLOT = 4, BIG = 1000000
+   integer, parameter :: HDR = 20               ! bytes of a frame's 'RLF2' header
    type frame_t
       integer :: view = -1, zoom = 0, cx = 0, cy = 0, hl = -2, w = 0, h = 0
       integer(i8) :: ver = -1, used = 0
       real(dp) :: yaw = 0, pitch = 0
-      character(len=:), allocatable :: rep      ! the 'RLF1' header and the RGBA, ready to send
+      character(len=:), allocatable :: rep      ! the 'RLF2' header and the RGBA, ready to send
    end type frame_t
    type(frame_t) :: fc(NSLOT), orb
    character(len=:), allocatable :: img, oimg   ! the renderer's canvases (map, orbit)
@@ -28177,8 +30326,8 @@ contains
          'Milliseconds of simulation between two looks at the browser: more lets a slow '// &
          'world keep pace, less keeps the page lively.')
       kp_day = reg_param('daylength', 'Length of a day', 'Time', 45d0, 5d0, 600d0, &
-         'Seconds of wall time for one turn of the planet, and so for the night to sweep '// &
-         'round once.', logs=.true.)
+         'Seconds of wall time for one day, and so for the night to sweep once across '// &
+         'the map, edge to edge.', logs=.true.)
       kp_graze = find_param('graze');    kp_upkeep = find_param('upkeep')
       kp_price = find_param('priceoflife');  kp_heat = find_param('heatcost')
       kp_sigt = find_param('sigmat');    kp_ewill = find_param('ewill')
@@ -28230,6 +30379,7 @@ contains
       do k = 1, n
          call dispatch(q(k))
       end do
+      call rim_sweep()                          ! the World's Edge stays empty sea
       wver = wver + 1
    end subroutine world_apply
 
@@ -28260,6 +30410,7 @@ contains
       call world_apply()
       call terra_step();  call climate_step();  call flora_step();  call life_step()
       call spirits_step();  call fauna_step()
+      call rim_sweep()                           ! the World's Edge stays empty sea
       call polity_step();  call faith_step();  call market_step()
       call observe_step();  call chronicle_step()
       call render_tick()
@@ -28293,7 +30444,7 @@ contains
    end function tick_budget
 
    real(dp) function day_length()
-      ! seconds of wall time for one turn of the planet (the 'daylength' law)
+      ! seconds of wall time for one day (the 'daylength' law)
       day_length = max(1d0, law(kp_day, 45d0))
    end function day_length
 
@@ -28447,7 +30598,7 @@ contains
       call frame_get(VIEW_LIVING, 1, cx, cy, -1, k)
       call sb_put(sb, 'window.BOOT={w:'//itoa(fc(k)%w)//',h:'//itoa(fc(k)%h)//',cx:'// &
                       itoa(cx)//',cy:'//itoa(cy)//',frame:"')
-      call b64_put(sb, fc(k)%rep(17:), len(fc(k)%rep) - 16)
+      call b64_put(sb, fc(k)%rep(HDR+1:), len(fc(k)%rep) - HDR)
       call sb_put(sb, '",state:')
       call state_json(0, 0, .true.)
       call sb_put(sb, ',params:')
@@ -28457,21 +30608,28 @@ contains
    end subroutine r_boot
 
    subroutine r_frame(q)
-      ! /frame?v=&z=&cx=&cy=&hl=: 'RLF1', w, h, tick (int32, little endian), then RGBA
+      ! /frame?v=&z=&cx=&cy=&hl=&have=: 'RLF2', w, h, tick, ver (int32, little endian), then
+      ! RGBA.  The centre is held so that a window hangs over the edge of the world by a
+      ! quarter of its breadth at most; have=V, when V is the world's version still, gets an
+      ! empty answer: the page already holds this very frame
       character(*), intent(in) :: q
-      integer :: v, z
+      integer :: v, z, cx, cy, have
       v = view_code(qval(q, 'v'))
       if (v < 0) v = VIEW_LIVING
       z = qint(q, 'z', 1, 1, 4)
       if (z == 3) z = 2
-      call frame_get(v, z, wrapi(qint(q, 'cx', NX/2, -BIG, BIG)), &
-                     wrapj(qint(q, 'cy', NY/2, -BIG, BIG)), qint(q, 'hl', -1, -1, 65535), rslot)
-      rkind = K_FRAME;  rtype = 'application/octet-stream'
+      cx = qint(q, 'cx', NX/2, NX/(4*z), NX - NX/(4*z))
+      cy = qint(q, 'cy', NY/2, NY/(4*z), NY - NY/(4*z))
+      have = qint(q, 'have', -1, -1, huge(1))
+      rtype = 'application/octet-stream'
+      if (have >= 0 .and. int(have, i8) == iand(wver, 2147483647_i8)) return   ! nothing new
+      call frame_get(v, z, cx, cy, qint(q, 'hl', -1, -1, 65535), rslot)
+      rkind = K_FRAME
       web_frames = web_frames + 1
    end subroutine r_frame
 
    subroutine r_orbit(q)
-      ! /orbit?yaw=&pitch=: the doughnut from space, in the same binary format
+      ! /orbit?yaw=&pitch=: the world seen from space, in the same binary format
       character(*), intent(in) :: q
       real(dp) :: yaw, pitch, t0
       integer :: w, h
@@ -28480,7 +30638,7 @@ contains
          t0 = wall()
          call render_orbit(yaw, pitch, oimg, w, h)
          orbit_ms = ema(orbit_ms, 1d3*(wall() - t0))
-         call pack_frame(orb, oimg, w, h)
+         call pack_frame(orb, oimg, w, h, wver)
          orb%ver = wver;  orb%yaw = yaw;  orb%pitch = pitch
       end if
       rkind = K_ORBIT;  rtype = 'application/octet-stream'
@@ -28495,7 +30653,8 @@ contains
 
    subroutine r_set(q)
       ! /set?k=key&v=value: a law moves (clamped to its range); without v it is only read;
-      ! k=* restores every default
+      ! k=* restores every default.  A law that moves may change the look of the map even
+      ! while the world is paused, so it counts as a new version of the world
       character(*), intent(in) :: q
       character(len=:), allocatable :: k
       integer :: p
@@ -28504,6 +30663,7 @@ contains
       k = trim(adjustl(qval(q, 'k')))
       if (k == '*') then
          call reset_params()
+         wver = wver + 1
          call sb_put(sb, '{"ok":true,"n":'//itoa(npar)//'}')
          return
       end if
@@ -28513,18 +30673,27 @@ contains
          call sb_put(sb, '{"ok":false,"err":'//jstr('there is no law called "'//k//'"')//'}')
          return
       end if
-      if (len(qval(q, 'v')) > 0) ok = set_param(k, qreal(q, 'v', pv(p)))
+      if (len(qval(q, 'v')) > 0) then
+         ok = set_param(k, qreal(q, 'v', pv(p)))
+         wver = wver + 1
+      end if
       call jo('');  call jb('ok', ok);  call js('k', k);  call jr('v', pv(p));  call jend('}')
    end subroutine r_set
 
    subroutine r_cmd(q)
-      ! /cmd?c=name&x=&y=&r=&v=&s=: the controls act at once; the Hand's deeds are queued
+      ! /cmd?c=name&x=&y=&r=&v=&s=: the controls act at once; the Hand's deeds are queued.
+      ! Beyond the edge of the world there is nothing to touch, so a place off the board is
+      ! refused outright
       character(*), intent(in) :: q
       character(len=:), allocatable :: c, s, err
       integer :: kind, x, y, r, g
       real(dp) :: v, v2
       c = lower(trim(adjustl(qval(q, 'c'))));  s = trim(adjustl(qval(q, 's')))
-      x = wrapi(qint(q, 'x', NX/2, -BIG, BIG));  y = wrapj(qint(q, 'y', NY/2, -BIG, BIG))
+      x = qint(q, 'x', NX/2, -BIG, BIG);  y = qint(q, 'y', NY/2, -BIG, BIG)
+      if (.not. onmap(x, y)) then
+         call sb_put(sb, '{"ok":false,"err":"beyond the edge of the world"}')
+         return
+      end if
       r = qint(q, 'r', 6, 1, 64)
       v = qreal(q, 'v', 0d0);  v2 = qreal(q, 'v2', 0d0)
       kind = 0;  g = 0;  err = ''
@@ -28695,7 +30864,11 @@ contains
       character(*), intent(in) :: q
       integer :: i, j, g, r
       logical :: live
-      i = wrapi(qint(q, 'x', NX/2, -BIG, BIG));  j = wrapj(qint(q, 'y', NY/2, -BIG, BIG))
+      i = qint(q, 'x', NX/2, -BIG, BIG);  j = qint(q, 'y', NY/2, -BIG, BIG)
+      if (.not. onmap(i, j)) then
+         call sb_put(sb, '{"ok":false,"err":"beyond the edge of the world"}')
+         return
+      end if
       live = alive(i,j) /= 0
       g = gene(i,j);  r = -1
       if (live) r = g_rule(g)
@@ -28756,6 +30929,12 @@ contains
       integer :: g, d
       if (purist) then
          s = 'the Conway limit: B3/S23 alone decides, on land and sea alike'
+         if (inrim(i, j)) s = s//', out to the very edge of the world'
+         return
+      end if
+      if (inrim(i, j)) then
+         s = 'the World''s Edge: the last of the sea before it pours off the world; nothing '// &
+             'lives or takes root here'
          return
       end if
       if (alive(i,j) == 0) then
@@ -28977,30 +31156,82 @@ contains
    end subroutine r_peoples
 
    subroutine r_society(q)
-      ! /society?ph=K: the realms with their markets, wars and treaties, the world market
-      ! (prices since market day K), the largest trades, the faiths and the prophecies
+      ! /society?ph=K: the realms with their markets, wars and treaties, the borders they
+      ! share and how those borders stand, the world market (prices since market day K), the
+      ! largest trades, the faiths and the prophecies
       character(*), intent(in) :: q
-      integer :: p, a, b, k, f, n, m, since, k0, c, w, i, j
+      integer, parameter :: DI(4) = [1, -1, 0, 0], DJ(4) = [0, 0, 1, -1]
+      integer :: p, a, b, k, f, n, m, since, k0, c, w, i, j, d, ii, jj, np
       integer :: ord(MAXFLOWS_SHOWN)
-      real(dp) :: sxc(MAXPOL), sxs(MAXPOL), syc(MAXPOL), sys(MAXPOL), tcx(MAXPOL), tcy(MAXPOL)
-      integer  :: tarea(MAXPOL), top3(3)
-      real(dp) :: tv(3), v
-      sxc = 0;  sxs = 0;  syc = 0;  sys = 0;  tarea = 0
-      do j = 1, NY                               ! where each realm's land lies (circular means)
+      real(dp) :: tsx(MAXPOL), tsy(MAXPOL), tdd(MAXPOL)
+      integer  :: tarea(MAXPOL), scx(MAXPOL), scy(MAXPOL), top3(3)
+      real(dp) :: tv(3), v, dd
+      integer,  allocatable :: own(:,:), blen(:,:), bx(:,:), by(:,:), wpair(:,:), wx(:), wy(:)
+      real(dp), allocatable :: bsx(:,:), bsy(:,:), bdd(:,:), wdd(:)
+      ! where each realm's land lies, and where realms meet.  The first sweep notes every
+      ! cell's realm, each realm's mean place, and each face of land shared by two realms
+      ! (counted once, from the cell above or to the right of it); the second snaps each
+      ! mean onto the realm's own ground, each border's middle onto a cell of that border,
+      ! and each war's front onto the nearest cell where the two realms touch
+      np = max(1, npol)
+      allocate(own(NX,NY), blen(np,np), bx(np,np), by(np,np), wpair(np,np), bsx(np,np), &
+               bsy(np,np), bdd(np,np), wx(max(1, nwrec)), wy(max(1, nwrec)), wdd(max(1, nwrec)))
+      own = 0;  blen = 0;  bx = 0;  by = 0;  wpair = 0;  bsx = 0;  bsy = 0;  bdd = huge(1d0)
+      tsx = 0;  tsy = 0;  tarea = 0;  tdd = huge(1d0);  scx = 0;  scy = 0
+      do j = 1, NY
          do i = 1, NX
             if (land(i,j) == 0) cycle
             p = realm_at(i, j)
+            own(i,j) = p
             if (p < 1) cycle
             tarea(p) = tarea(p) + 1
-            sxc(p) = sxc(p) + cos(phi_of(i));  sxs(p) = sxs(p) + sin(phi_of(i))
-            syc(p) = syc(p) + cos(TWOPI*(j - 0.5d0)/NY);  sys(p) = sys(p) + sin(TWOPI*(j - 0.5d0)/NY)
+            tsx(p) = tsx(p) + i;  tsy(p) = tsy(p) + j
+            if (i > 1) call face(own(i-1,j))
+            if (j > 1) call face(own(i,j-1))
          end do
       end do
-      do p = 1, MAXPOL
-         tcx(p) = 0;  tcy(p) = 0
+      do p = 1, npol
          if (tarea(p) == 0) cycle
-         tcx(p) = modulo(atan2(sxs(p), sxc(p))/TWOPI, 1d0)*NX + 0.5d0
-         tcy(p) = modulo(atan2(sys(p), syc(p))/TWOPI, 1d0)*NY + 0.5d0
+         tsx(p) = tsx(p)/tarea(p);  tsy(p) = tsy(p)/tarea(p)
+      end do
+      do b = 1, npol
+         do a = 1, b - 1
+            if (blen(a,b) == 0) cycle
+            bsx(a,b) = bsx(a,b)/blen(a,b);  bsy(a,b) = bsy(a,b)/blen(a,b)
+         end do
+      end do
+      do w = 1, nwrec                            ! the wars whose fronts are to be found
+         wx(w) = wrec(w)%fx;  wy(w) = wrec(w)%fy;  wdd(w) = huge(1d0)
+         if (wrec(w)%state /= 1) cycle
+         a = min(wrec(w)%a, wrec(w)%b);  b = max(wrec(w)%a, wrec(w)%b)
+         if (a >= 1 .and. b <= npol .and. a /= b) wpair(a,b) = w
+      end do
+      do j = 1, NY
+         do i = 1, NX
+            p = own(i,j)
+            if (p < 1) cycle
+            dd = (i - tsx(p))**2 + (j - tsy(p))**2
+            if (dd < tdd(p)) then
+               tdd(p) = dd;  scx(p) = i;  scy(p) = j
+            end if
+            do d = 1, 4
+               ii = i + DI(d);  jj = j + DJ(d)
+               if (.not. onmap(ii, jj)) cycle
+               if (own(ii,jj) < 1 .or. own(ii,jj) == p) cycle
+               a = min(p, own(ii,jj));  b = max(p, own(ii,jj))
+               dd = (i - bsx(a,b))**2 + (j - bsy(a,b))**2
+               if (dd < bdd(a,b)) then
+                  bdd(a,b) = dd;  bx(a,b) = i;  by(a,b) = j
+               end if
+               w = wpair(a,b)
+               if (w > 0) then
+                  dd = real(i - wrec(w)%fx, dp)**2 + real(j - wrec(w)%fy, dp)**2
+                  if (dd < wdd(w)) then
+                     wdd(w) = dd;  wx(w) = i;  wy(w) = j
+                  end if
+               end if
+            end do
+         end do
       end do
       call jo('')
       call ja('realms')
@@ -29030,7 +31261,10 @@ contains
          call jvec('prices', pol(p)%price);  call jvec('prod', pol(p)%prod)
          call jvec('cons', pol(p)%cons);  call jvec('imp', pol(p)%imp)
          call jvec('expo', pol(p)%expo);  call jvec('stock', pol(p)%stock)
-         call ji('cx', nint(tcx(p)));  call ji('cy', nint(tcy(p)));  call ji('area', tarea(p))
+         if (tarea(p) == 0 .and. pol(p)%capital >= 1 .and. pol(p)%capital <= nregion) then
+            scx(p) = regs(pol(p)%capital)%cx;  scy(p) = regs(pol(p)%capital)%cy
+         end if
+         call ji('cx', scx(p));  call ji('cy', scy(p));  call ji('area', tarea(p))
          call jb('famine', pol(p)%shortfall > 0.2d0)
          call ja('atWar')
          do b = 1, npol
@@ -29090,8 +31324,49 @@ contains
          call ji('winsA', wrec(w)%wins_a);  call ji('winsB', wrec(w)%wins_b)
          call ji('slainA', wrec(w)%slain_a);  call ji('slainB', wrec(w)%slain_b)
          call ji('takenA', wrec(w)%taken_a);  call ji('takenB', wrec(w)%taken_b)
-         call ji('x', wrec(w)%fx);  call ji('y', wrec(w)%fy);  call jb('holy', wrec(w)%cause == 2)
+         call ji('x', wx(w));  call ji('y', wy(w));  call jb('holy', wrec(w)%cause == 2)
+         call js('fa', rname(wrec(w)%ra));  call js('fb', rname(wrec(w)%rb))
+         call ji('streak', wrec(w)%streak)
+         if (wrec(w)%streak < 0) then            ! b presses on a's front region, else a on b's
+            call ji('need', merge(5, 3, wrec(w)%ra > 0 .and. wrec(w)%ra == pol(a)%capital))
+         else
+            call ji('need', merge(5, 3, wrec(w)%rb > 0 .and. wrec(w)%rb == pol(b)%capital))
+         end if
+         call jr('last', tyear(wrec(w)%t_last));  call ji('lastWin', wrec(w)%last_win)
+         call ji('lastSlain', wrec(w)%last_slain)
          call jend('}')
+      end do
+      call jend(']')
+      call ja('borders')                         ! every border two standing realms share
+      do a = 1, npol
+         do b = a + 1, npol
+            if (blen(a,b) == 0) cycle
+            call jo('');  call ji('a', a);  call ji('b', b);  call ji('len', blen(a,b))
+            call ji('x', bx(a,b));  call ji('y', by(a,b))
+            if (war(a,b) /= 0) then
+               call js('st', 'war')
+            else if (truce(a,b) > tick) then
+               call js('st', 'truce')
+            else if (ally(a,b) /= 0) then
+               call js('st', 'ally')
+            else if (pact(a,b) /= 0) then
+               call js('st', 'pact')
+            else if (rel(a,b) < -30) then
+               call js('st', 'tense')
+            else
+               call js('st', 'peace')
+            end if
+            call ji('rel', nint(rel(a,b)));  call jend('}')
+         end do
+      end do
+      call jend(']')
+      call ja('truces')                          ! the peaces sworn for a term of years
+      do a = 1, npol
+         do b = a + 1, npol
+            if (pol(a)%state /= 1 .or. pol(b)%state /= 1 .or. truce(a,b) <= tick) cycle
+            call jo('');  call ji('a', a);  call ji('b', b)
+            call jr('until', tyear(truce(a,b)));  call jend('}')
+         end do
       end do
       call jend(']')
       call pairs('alliances', 1);  call pairs('pacts', 2)
@@ -29209,6 +31484,22 @@ contains
       call jend(']')
       call jend('}')
    contains
+      subroutine face(q_)
+         ! the cell (i,j) of realm p meets a cell of realm q_ across one face
+         integer, intent(in) :: q_
+         integer :: a_, b_
+         if (q_ < 1 .or. q_ == p) return
+         a_ = min(p, q_);  b_ = max(p, q_)
+         blen(a_,b_) = blen(a_,b_) + 1
+         bsx(a_,b_) = bsx(a_,b_) + i;  bsy(a_,b_) = bsy(a_,b_) + j
+      end subroutine face
+      function rname(r) result(t)
+         ! a region's name, '' for none
+         integer, intent(in) :: r
+         character(len=:), allocatable :: t
+         t = ''
+         if (r >= 1 .and. r <= nregion) t = trim(regs(r)%name)
+      end function rname
       subroutine place(key, r)
          ! a region's label point as {"x":..,"y":..}
          character(*), intent(in) :: key
@@ -29550,26 +31841,29 @@ contains
       t0 = wall()
       call render_map(view, zoom, cx, cy, hl, img, w, h)
       frame_ms = ema(frame_ms, 1d3*(wall() - t0))
-      call pack_frame(fc(k), img, w, h)
+      call pack_frame(fc(k), img, w, h, wver)
       fc(k)%view = view;  fc(k)%zoom = zoom;  fc(k)%cx = cx;  fc(k)%cy = cy;  fc(k)%hl = hl
       fc(k)%ver = wver;  fc(k)%used = nuse
    end subroutine frame_get
 
-   subroutine pack_frame(f, pix, w, h)
-      ! header and pixels in one buffer: 'RLF1', w, h, tick as little-endian int32, RGBA
+   subroutine pack_frame(f, pix, w, h, ver)
+      ! header and pixels in one buffer: 'RLF2', then w, h, tick and the world version ver it
+      ! was drawn at, as little-endian int32, then the RGBA
       type(frame_t), intent(inout) :: f
       character(*),  intent(in)    :: pix
       integer,       intent(in)    :: w, h
+      integer(i8),   intent(in)    :: ver
       integer :: n, m
       n = 4*max(0, w)*max(0, h)
       m = min(n, len(pix))
       if (allocated(f%rep)) then
-         if (len(f%rep) /= 16 + n) deallocate(f%rep)
+         if (len(f%rep) /= HDR + n) deallocate(f%rep)
       end if
-      if (.not. allocated(f%rep)) allocate(character(len=16 + n) :: f%rep)
-      f%rep(1:16) = 'RLF1'//le32(w)//le32(h)//le32(int(iand(tick, 2147483647_i8)))
-      f%rep(17:16 + m) = pix(1:m)
-      if (m < n) f%rep(17 + m:) = repeat(achar(0), n - m)
+      if (.not. allocated(f%rep)) allocate(character(len=HDR + n) :: f%rep)
+      f%rep(1:HDR) = 'RLF2'//le32(w)//le32(h)//le32(int(iand(tick, 2147483647_i8)))// &
+                     le32(int(iand(ver, 2147483647_i8)))
+      f%rep(HDR+1:HDR + m) = pix(1:m)
+      if (m < n) f%rep(HDR+1 + m:) = repeat(achar(0), n - m)
       f%w = w;  f%h = h
    end subroutine pack_frame
 
@@ -29907,8 +32201,8 @@ program real_life
       end subroutine c_exit
    end interface
 
-   integer, parameter :: ORBIT = -2                 ! --view orbit: the planet from space
-   integer :: port = 8080, nx0 = 384, ny0 = 192, seed = 1, years = 400, view = VIEW_LIVING
+   integer, parameter :: ORBIT = -2                 ! --view orbit: the world seen from space
+   integer :: port = 8080, nx0 = 512, ny0 = 256, seed = 1, years = 400, view = VIEW_LIVING
    logical :: headless = .false., open_it = .false., start_purist = .false.
    character(len=:), allocatable :: snap, frames, lab
    character(len=1024) :: shead(4) = ''              ! the observatory's table header, kept
@@ -29937,7 +32231,7 @@ contains
    ! ================================================================ the command line
 
    subroutine read_args()
-      ! --port N, --size small|medium|large, --seed N, --headless, --years N, --snap F,
+      ! --port N, --size small|medium|large|huge, --seed N, --headless, --years N, --snap F,
       ! --frames D, --view NAME, --lab NAME, --open, --purist (or written --key=value)
       character(len=:), allocatable :: a, key, val
       integer :: k, n, e
@@ -29972,8 +32266,10 @@ contains
                nx0 = 384;  ny0 = 192
             case ('large')
                nx0 = 512;  ny0 = 256
+            case ('huge')
+               nx0 = 768;  ny0 = 384
             case default
-               call die('--size is small, medium or large, not "'//val//'"')
+               call die('--size is small, medium, large or huge, not "'//val//'"')
             end select
          case ('--seed')
             seed = to_int(key, val, 0, huge(1))
@@ -30058,15 +32354,15 @@ contains
    subroutine usage()
       ! the help text
       write(output_unit, '(a)') &
-         'REAL LIFE -- the Game of Life, grown up into a world on a doughnut-shaped planet', &
+         'REAL LIFE -- the Game of Life, grown up into a world with an edge', &
          '', &
          'usage:  real-life [options]', &
          '', &
          '  --port N       serve on 127.0.0.1, on the first free port from N up (8080)', &
-         '  --size S       small (256 x 128), medium (384 x 192, the default) or large', &
-         '                 (512 x 256)', &
+         '  --size S       small (256 x 128), medium (384 x 192), large (512 x 256, the', &
+         '                 default) or huge (768 x 384)', &
          '  --seed N       the seed of the world (1); 0 picks a new one', &
-         '  --purist       begin in the Conway limit: plain B3/S23 on the torus', &
+         '  --purist       begin in the Conway limit: plain B3/S23 on the open board', &
          '  --open         open the page in the default browser', &
          '  --headless     no browser: run the years and print the Book as it is written', &
          '  --years N      years to run headless (400)', &
@@ -30159,7 +32455,7 @@ contains
          '   R E A L   L I F E', &
          '   “In the beginning there was B3/S23.”', '', &
          '   the world of '//trim(world_name)//': seed '//itoa(world_seed)//', '// &
-         itoa(NX)//' x '//itoa(NY)//' cells'//limit, '', &
+         itoa(NX)//' x '//itoa(NY)//' cells to the World''s Edge'//limit, '', &
          '   open http://localhost:'//itoa(net_port), &
          '   (Ctrl-C ends the world)', ''
       flush(output_unit)
@@ -30253,7 +32549,7 @@ contains
    end function count_digits
 
    subroutine picture(fname)
-      ! a PPM of the world in the chosen view (the orbit view is the planet from space)
+      ! a PPM of the world in the chosen view (the orbit view is the world seen from space)
       character(*), intent(in) :: fname
       character(len=:), allocatable :: b
       integer :: w, h
